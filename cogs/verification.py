@@ -186,7 +186,7 @@ class OnboardingButton(ui.Button):
             )
             
             # Add Typeform link with user ID parameter
-            typeform_link = f"https://form.typeform.com/to/iWlPNbs0#auth_code={user_id}"
+            typeform_link = f"https://form.typeform.com/to/VkuOahlj#auth_code={user_id}"
             embed.add_field(
                 name="🔗 Complete Survey",
                 value=f"[Click here to fill out the survey]({typeform_link})",
@@ -306,7 +306,7 @@ class WelcomeVerifyButton(ui.Button):
             )
             
             # Add Typeform link with user ID parameter
-            typeform_link = f"https://form.typeform.com/to/iWlPNbs0#auth_code={user_id}"
+            typeform_link = f"https://form.typeform.com/to/VkuOahlj#auth_code={user_id}"
             embed.add_field(
                 name="🔗 Complete Survey",
                 value=f"[Click here to fill out the survey]({typeform_link})",
@@ -376,8 +376,6 @@ class WelcomeVerifyButton(ui.Button):
         if expired_users:
             self.save_cooldowns()
             logging.debug(f"Cleaned up {len(expired_users)} expired cooldowns")
-
-
 class VerificationView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)

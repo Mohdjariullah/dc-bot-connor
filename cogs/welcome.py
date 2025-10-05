@@ -125,71 +125,9 @@ class Welcome(commands.Cog):
                     logging.info(f"Detected premium role '{premium_role_name}' (ID: {role.id}) for {member.display_name} ({member.id})")
                     break
             
-            # ALL users go through verification - premium users get special handling
+            # If no premium role detected, do nothing (Carl-bot handles normal users)
             if not premium_role_detected:
-                # Normal user - Carl-bot will assign Member role, but they still need verification
-                logging.info(f"No premium role detected for {member.display_name} ({member.id}) - normal user needs verification")
-                
-                # Assign unverified role for normal users too
-                if unverified_role not in member.roles:
-                    await member.add_roles(unverified_role)
-                    logging.info(f"Assigned unverified role to normal user {member.display_name} ({member.id})")
-                
-                # Store normal user data (no premium role)
-                try:
-                    from utils import safe_json_read, safe_json_write
-                    user_data = safe_json_read(USER_DATA_FILE, {})
-                    user_data[user_id] = {
-                        'premium_role_id': None,
-                        'premium_role_name': None,
-                        'survey_status': 'pending'
-                    }
-                    safe_json_write(USER_DATA_FILE, user_data)
-                except ImportError:
-                    # Fallback to direct file operations
-                    try:
-                        with open(USER_DATA_FILE, 'r') as f:
-                            user_data = json.load(f)
-                    except FileNotFoundError:
-                        user_data = {}
-                    
-                    user_data[user_id] = {
-                        'premium_role_id': None,
-                        'premium_role_name': None,
-                        'survey_status': 'pending'
-                    }
-                    
-                    with open(USER_DATA_FILE, 'w') as f:
-                        json.dump(user_data, f, indent=2)
-                
-                # Send normal welcome DM
-                await self.send_normal_welcome_dm(member)
-                
-                # Log normal user join
-                logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
-                if logs_channel_id:
-                    logs_channel = guild.get_channel(logs_channel_id)
-                    if logs_channel:
-                        embed = discord.Embed(
-                            title="👋 New Member Joined",
-                            description=f"**{member.mention}** has joined the server",
-                            color=0x00ff00,
-                            timestamp=datetime.now(timezone.utc)
-                        )
-                        embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
-                        embed.add_field(name="Account Created", value=f"<t:{int(member.created_at.timestamp())}:R>", inline=True)
-                        embed.add_field(name="Status", value="⏳ Awaiting verification", inline=True)
-                        embed.set_thumbnail(url=member.display_avatar.url)
-                        embed.set_footer(text=f"Member #{guild.member_count}")
-                        
-                        try:
-                            await logs_channel.send(embed=embed)
-                            logging.info(f"Successfully logged normal member join for {member.display_name} ({member.id})")
-                        except discord.Forbidden:
-                            logging.warning(f"Bot doesn't have permission to send messages to logs channel {logs_channel_id}")
-                        except Exception as e:
-                            logging.error(f"Error sending log message: {e}")
-                
+                logging.info(f"No premium role detected for {member.display_name} ({member.id}) - Carl-bot will handle")
                 return
             
             # Mark as logged immediately to prevent duplicates
@@ -240,8 +178,9 @@ class Welcome(commands.Cog):
                 await member.add_roles(unverified_role)
                 logging.info(f"Assigned unverified role to {member.display_name} ({member.id})")
             
-            # Send premium welcome DM
+            # Send premium welcome DM and ping in #verify
             await self.send_premium_welcome_dm(member, premium_role_name)
+            await self.ping_in_verify_channel(member, premium_role_name)
             
             # Log to logs channel (only for premium users)
             logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
@@ -738,6 +677,30 @@ class Welcome(commands.Cog):
             logging.warning(f"Could not send premium welcome DM to {member.display_name} ({member.id}) - DMs disabled")
         except Exception as e:
             logging.error(f"Error sending premium welcome DM to {member.display_name} ({member.id}): {e}")
+
+    async def ping_in_verify_channel(self, member, premium_role_name):
+        """Ghost ping user in #verify channel and delete message"""
+        try:
+            guild = member.guild
+            verify_channel = None
+            
+            # Look for verify channel
+            for channel in guild.text_channels:
+                if channel.name == 'verify':
+                    verify_channel = channel
+                    break
+            
+            if verify_channel:
+                # Send ghost ping message and delete it after 30 seconds
+                message = await verify_channel.send(f"{member.mention}")
+                await asyncio.sleep(30)
+                await message.delete()
+                logging.info(f"Ghost pinged user {member.display_name} ({member.id}) in #verify channel")
+            else:
+                logging.warning("Verify channel not found - cannot ping user")
+                
+        except Exception as e:
+            logging.error(f"Error ghost pinging user in verify channel: {e}")
 
     async def report_critical_error(self, error_type, error_message):
         """Report critical errors to owners via logs and DM"""

@@ -6,6 +6,12 @@ import re
 from datetime import datetime, timezone
 from utils import safe_json_write, safe_json_read
 
+# Role IDs from environment variables
+UNVERIFIED_ROLE_ID = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+VIP_ROLE_ID = int(os.getenv('VIP_ROLE_ID', 0))
+HUNDRED_K_ROLE_ID = int(os.getenv('HUNDRED_K_ROLE_ID', 0))
+SUBMISSION_LOGS_CHANNEL_ID = int(os.getenv('SUBMISSION_LOGS_CHANNEL_ID', 0))
+
 
 class WebhookHandler(commands.Cog):
     """Handle Typeform webhook messages and automatic user verification"""
@@ -174,6 +180,14 @@ class WebhookHandler(commands.Cog):
     async def auto_verify_user(self, guild, user_id, webhook_message):
         """Automatically verify premium user based on auth_code from Typeform webhook"""
         try:
+            # Step 1: Extract auth_code (already done in calling function)
+            logging.info(f"Processing Typeform submission for user {user_id}")
+            
+            # Step 2: Verify auth_code exists in SUBMISSION_LOGS_CHANNEL_ID
+            if not await self.verify_auth_code_in_logs(guild, user_id):
+                logging.warning(f"Auth code {user_id} not found in submission logs channel")
+                return
+            
             # Check if user exists in the guild
             user = guild.get_member(int(user_id))
             if not user:
@@ -207,29 +221,35 @@ class WebhookHandler(commands.Cog):
             safe_json_write('user_data.json', user_data)
             
             # Remove unverified role
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
-            if unverified_role_id:
-                unverified_role = guild.get_role(unverified_role_id)
+            if UNVERIFIED_ROLE_ID:
+                unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
                 if unverified_role and unverified_role in user.roles:
                     await user.remove_roles(unverified_role)
                     logging.info(f"Removed unverified role from user {user_id}")
             
-            # Restore premium role using stored role ID
+            # Action 1: Restore premium role using stored role ID
             premium_role = guild.get_role(premium_role_id)
             
             if premium_role:
                 await user.add_roles(premium_role)
                 logging.info(f"Restored premium role '{premium_role_name}' (ID: {premium_role_id}) to user {user_id}")
                 
-                # Send premium verification confirmation
+                # Action 2: Send DM with verification complete message and call link
+                calendly_link = os.getenv('CALENDLY_LINK', 'https://calendly.com/ajtradingprofits-support/mastermind-call')
                 embed = discord.Embed(
-                    title="✅ Welcome Back - Premium Access Restored!",
+                    title="✅ Verification Complete!",
                     description=(
-                        f"Excellent! We've received your survey submission and restored your **{premium_role_name}** access.\n\n"
+                        f"Verification complete! You've been restored to your **{premium_role_name}** role.\n\n"
                         "You now have full premium access to the community!\n\n"
+                        "**Ready to level up? Book your mastermind call to get started!**\n\n"
                         "Welcome back! 🎉"
                     ),
                     color=0x00ff00
+                )
+                embed.add_field(
+                    name="📞 Book Your Mastermind Call",
+                    value=f"[Click here to book your call]({calendly_link})",
+                    inline=False
                 )
             else:
                 logging.error(f"Premium role with ID {premium_role_id} ('{premium_role_name}') not found in guild")
@@ -260,6 +280,47 @@ class WebhookHandler(commands.Cog):
                 
         except Exception as e:
             logging.error(f"Error in auto_verify_user: {e}")
+
+    async def verify_auth_code_in_logs(self, guild, auth_code):
+        """Verify that auth_code exists in SUBMISSION_LOGS_CHANNEL_ID"""
+        try:
+            # Get the submission logs channel
+            if not SUBMISSION_LOGS_CHANNEL_ID:
+                logging.warning("SUBMISSION_LOGS_CHANNEL_ID not set in environment variables")
+                return True  # Skip verification if not configured
+            
+            logs_channel = guild.get_channel(SUBMISSION_LOGS_CHANNEL_ID)
+            if not logs_channel:
+                logging.error(f"Submission logs channel {SUBMISSION_LOGS_CHANNEL_ID} not found")
+                return False
+            
+            # Search for the auth_code in recent messages (last 100 messages)
+            async for message in logs_channel.history(limit=100):
+                # Check message content for auth_code
+                if auth_code in message.content:
+                    logging.info(f"Found auth_code {auth_code} in submission logs")
+                    return True
+                
+                # Check embed fields for auth_code
+                if message.embeds:
+                    for embed in message.embeds:
+                        # Check embed description
+                        if embed.description and auth_code in embed.description:
+                            logging.info(f"Found auth_code {auth_code} in embed description")
+                            return True
+                        
+                        # Check embed fields
+                        for field in embed.fields:
+                            if field.value and auth_code in field.value:
+                                logging.info(f"Found auth_code {auth_code} in embed field")
+                                return True
+            
+            logging.warning(f"Auth_code {auth_code} not found in submission logs channel")
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error verifying auth_code in logs: {e}")
+            return False
 
     @commands.command(name="test_webhook")
     @commands.has_permissions(administrator=True)

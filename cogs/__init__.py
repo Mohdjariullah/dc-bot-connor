@@ -7,6 +7,7 @@ from . import welcome
 from . import daily_access
 from . import ai_channel
 from . import webhook_handler
+from . import role_monitor
 
 async def setup(bot: commands.Bot) -> None:
     """Add all cogs to the bot."""
@@ -21,4 +22,6 @@ async def setup(bot: commands.Bot) -> None:
     await ai_channel.setup(bot)
     logger.debug(msg.format("ai_channel"))
     await webhook_handler.setup(bot)
-    logger.debug(msg.format("webhook_handler")) 
+    logger.debug(msg.format("webhook_handler"))
+    await role_monitor.setup(bot)
+    logger.debug(msg.format("role_monitor")) 
