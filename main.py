@@ -21,7 +21,7 @@ UNVERIFIED_ROLE_ID = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
 WELCOME_CHANNEL_ID = int(os.getenv('WELCOME_CHANNEL_ID', 0))
 ROLE_ASSIGNMENT_DELAY = int(os.getenv('ROLE_ASSIGNMENT_DELAY', 10))
 CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', 30))
-CALENDLY_LINK = os.getenv('CALENDLY_LINK', 'https://calendly.com/ajtradingprofits-support/mastermind-call')
+CALENDLY_LINK = os.getenv('CALENDLY_LINK', '')
 
 def is_authorized_guild_or_owner(interaction):
     """Check if user is authorized to use commands"""
@@ -178,10 +178,10 @@ class UGCMasteryGatekeeper(commands.Bot):
                 status=discord.Status.dnd,
                 activity=discord.Activity(
                     type=discord.ActivityType.watching,
-                    name="Vo Creations"
+                    name="Apex Ecom"
                 )
             )
-            print("✅ Status set: DND - Watching Vo Creations")
+            print("✅ Status set: DND - Watching Apex Ecom")
         except Exception as e:
             print(f"❌ Failed to set status: {e}")
         

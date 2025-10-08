@@ -3,14 +3,13 @@ from discord import ui
 import json
 import logging
 from datetime import datetime, timezone
-import os
 import time
+import asyncio
 from utils import safe_json_write, safe_json_read, report_critical_error
-
-USER_DATA_FILE = 'user_data.json'
-COOLDOWN_FILE = 'button_cooldowns.json'
-LEAD_DATA_FILE = 'lead_data.json'
-RATE_LIMIT_SECONDS = 10  # 10 second rate limit
+from config import (
+    MEMBER_ROLE_ID, UNVERIFIED_ROLE_ID, USER_DATA_FILE, COOLDOWN_FILE, 
+    LEAD_DATA_FILE, RATE_LIMIT_SECONDS, TYPEFORM_LINK, get_survey_embed
+)
 
 
 class OnboardingButton(ui.Button):
@@ -89,8 +88,8 @@ class OnboardingButton(ui.Button):
             user_data = safe_json_read(USER_DATA_FILE, {})
             
             # Check roles
-            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            member_role_id = MEMBER_ROLE_ID
+            unverified_role_id = UNVERIFIED_ROLE_ID
             
             has_member_role = False
             has_unverified_role = False
@@ -106,8 +105,8 @@ class OnboardingButton(ui.Button):
                     if unverified_role and unverified_role in interaction.user.roles:
                         has_unverified_role = True
             
-            # Check if user already has member role
-            if has_member_role:
+            # Check if user already has member role AND doesn't have unverified role
+            if has_member_role and not has_unverified_role:
                 embed = discord.Embed(
                     title="✅ Already Verified!",
                     description="You already have access to the community.",
@@ -118,16 +117,12 @@ class OnboardingButton(ui.Button):
                         await interaction.response.send_message(embed=embed, ephemeral=True)
                 except Exception as e:
                     logging.error(f"Error sending already verified response: {e}")
-                logging.info(f"User {user_id} already has member role")
+                logging.info(f"User {user_id} already has member role and no unverified role")
                 return
             
-            # Check if user has premium role stored (only premium users should use this button)
-            existing_data = user_data.get(user_id, {})
-            premium_role_id = existing_data.get('premium_role_id')
-            premium_role_name = existing_data.get('premium_role_name')
-            
-            if not premium_role_id or not premium_role_name:
-                # User doesn't have premium role stored - they shouldn't be using this button
+            # Check if user is in user_data.json (only users who went through premium role assignment)
+            if user_id not in user_data:
+                # User not in user_data.json - they shouldn't be using this button
                 embed = discord.Embed(
                     title="❌ Access Denied",
                     description="This verification is only for premium users. Please contact support if you believe this is an error.",
@@ -138,8 +133,13 @@ class OnboardingButton(ui.Button):
                         await interaction.response.send_message(embed=embed, ephemeral=True)
                 except Exception as e:
                     logging.error(f"Error sending access denied response: {e}")
-                logging.info(f"Non-premium user {user_id} tried to use verification button")
+                logging.info(f"User {user_id} not in user_data.json - tried to use verification button")
                 return
+            
+            # Get user data
+            existing_data = user_data.get(user_id, {})
+            premium_role_id = existing_data.get('premium_role_id')
+            premium_role_name = existing_data.get('premium_role_name')
             
             # If user doesn't have unverified role, add it
             if not has_unverified_role and unverified_role_id and interaction.guild:
@@ -157,12 +157,12 @@ class OnboardingButton(ui.Button):
             user_data = safe_json_read(USER_DATA_FILE, {})
             existing_data = user_data.get(user_id, {})
             user_data[user_id] = {
-                'joined_at': existing_data.get('joined_at', 0),
+                'username': interaction.user.display_name,
                 'button_clicked_at': current_time,
-                'has_access': False,
-                'role_assigned': False,
-                'unverified_role_assigned': existing_data.get('unverified_role_assigned', False),
-                'lead_captured': False  # Will be set to True when webhook confirms Typeform submission
+                'premium_role_id': existing_data.get('premium_role_id'),
+                'premium_role_name': existing_data.get('premium_role_name'),
+                'survey_status': 'pending',
+                'unverified_role_assigned': True
             }
             safe_json_write(USER_DATA_FILE, user_data)
             
@@ -170,39 +170,13 @@ class OnboardingButton(ui.Button):
             self.button_cooldowns[user_id] = current_time
             self.save_cooldowns()
             
-            # Show Typeform link with user ID parameter
-            embed = discord.Embed(
-                title="📋 Complete Your Survey to Get Started",
-                description=(
-                    "Ready to take the next step? Complete our quick survey to get started with The VoCreations Mentorship!\n\n"
-                    "This survey will help us understand your goals and tailor the experience to your needs.\n\n"
-                    "👉 **Click the link below to complete the survey**\n\n"
-                    "**What happens next?**\n"
-                    "1. Complete the survey using the link below\n"
-                    "2. We'll automatically verify you once we receive your submission\n"
-                    "3. You'll get access to the community shortly after!"
-                ),
-                color=0x00ff00
-            )
-            
-            # Add Typeform link with user ID parameter
-            typeform_link = f"https://form.typeform.com/to/VkuOahlj#auth_code={user_id}"
-            embed.add_field(
-                name="🔗 Complete Survey",
-                value=f"[Click here to fill out the survey]({typeform_link})",
-                inline=False
-            )
-            
-            # Add user ID info for debugging
-            embed.add_field(
-                name="📋 Your User ID",
-                value=f"`{user_id}` (keep this for reference)",
-                inline=False
-            )
-            
-            embed.set_footer(text="We'll automatically verify you once you submit the survey!")
+            # Use centralized survey embed
+            embed = get_survey_embed("Premium", user_id)
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+            # Start monitoring webhook channel for this user
+            await self.start_webhook_monitoring(interaction.guild, user_id)
             
             logging.info(f"Showed Typeform link to user {user_id}")
             
@@ -226,6 +200,64 @@ class OnboardingButton(ui.Button):
                     )
             except Exception as response_error:
                 logging.error(f"Error sending error response: {response_error}")
+    
+    async def start_webhook_monitoring(self, guild, user_id):
+        """Start monitoring webhook channel for user ID after 10 seconds"""
+        try:
+            # Wait 10 seconds
+            await asyncio.sleep(10)
+            
+            # Import webhook handler to access verification logic
+            from .webhook_handler import WebhookHandler
+            
+            # Get webhook handler instance
+            webhook_handler = None
+            # Get bot instance from the guild
+            bot = guild._state._get_client()
+            if bot:
+                for cog in bot.cogs.values():
+                    if isinstance(cog, WebhookHandler):
+                        webhook_handler = cog
+                        break
+            
+            if webhook_handler:
+                # Monitor webhook channel for this user ID
+                await self.monitor_webhook_channel(guild, user_id, webhook_handler)
+                logging.info(f"Started webhook monitoring for user {user_id}")
+            else:
+                logging.warning("WebhookHandler not found - cannot start webhook monitoring")
+                
+        except Exception as e:
+            logging.error(f"Error starting webhook monitoring for user {user_id}: {e}")
+    
+    async def monitor_webhook_channel(self, guild, user_id, webhook_handler):
+        """Monitor webhook channel for user ID and verify if found"""
+        try:
+            from config import SUBMISSION_LOGS_CHANNEL_ID
+            
+            if not SUBMISSION_LOGS_CHANNEL_ID:
+                logging.warning("SUBMISSION_LOGS_CHANNEL_ID not set - cannot monitor webhook channel")
+                return
+            
+            logs_channel = guild.get_channel(SUBMISSION_LOGS_CHANNEL_ID)
+            if not logs_channel:
+                logging.error(f"Webhook channel {SUBMISSION_LOGS_CHANNEL_ID} not found")
+                return
+            
+            logging.info(f"Monitoring webhook channel for user {user_id}")
+            
+            # Check recent messages for the user ID
+            async for message in logs_channel.history(limit=50):
+                if user_id in message.content:
+                    logging.info(f"Found user {user_id} in webhook channel - proceeding with verification")
+                    # Call verification directly
+                    await webhook_handler.auto_verify_user(guild, user_id, message, skip_logs_check=True)
+                    return
+            
+            logging.info(f"User {user_id} not found in recent webhook messages")
+                
+        except Exception as e:
+            logging.error(f"Error monitoring webhook channel for user {user_id}: {e}")
 
 class WelcomeVerifyButton(ui.Button):
     def __init__(self):
@@ -290,47 +322,24 @@ class WelcomeVerifyButton(ui.Button):
             # Get premium role info
             premium_role_name = user_info.get('premium_role_name', 'Premium')
             
-            # User has premium role, mention it
-            embed = discord.Embed(
-                title="📋 Complete Your Survey to Restore Premium Access",
-                description=(
-                    f"Welcome back! We've detected your **{premium_role_name}** tier.\n\n"
-                    "Complete this quick survey to restore your premium access and get started with The VoCreations Mentorship!\n\n"
-                    "👉 **Click the link below to complete the survey**\n\n"
-                    "**What happens next?**\n"
-                    "1. Complete the survey using the link below\n"
-                    "2. We'll automatically restore your premium role\n"
-                    "3. You'll have full access to the community!"
-                ),
-                color=0x00ff00
-            )
-            
-            # Add Typeform link with user ID parameter
-            typeform_link = f"https://form.typeform.com/to/VkuOahlj#auth_code={user_id}"
-            embed.add_field(
-                name="🔗 Complete Survey",
-                value=f"[Click here to fill out the survey]({typeform_link})",
-                inline=False
-            )
-            
-            # Add user ID info for debugging
-            embed.add_field(
-                name="📋 Your User ID",
-                value=f"`{user_id}` (keep this for reference)",
-                inline=False
-            )
-            
-            embed.set_footer(text="We'll automatically verify you once you submit the survey!")
+            # Use centralized survey embed
+            embed = get_survey_embed(premium_role_name, user_id)
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+            # Start monitoring webhook channel for this user
+            await self.start_webhook_monitoring(interaction.guild, user_id)
             
             # Update user data to mark as having clicked the button (waiting for Typeform submission)
             user_data = safe_json_read(USER_DATA_FILE, {})
             existing_data = user_data.get(user_id, {})
             user_data[user_id] = {
+                'username': interaction.user.display_name,
+                'button_clicked_at': current_time,
                 'premium_role_id': existing_data.get('premium_role_id'),
                 'premium_role_name': existing_data.get('premium_role_name'),
-                'survey_status': 'pending'  # Will be set to 'verified' when webhook confirms Typeform submission
+                'survey_status': 'pending',
+                'unverified_role_assigned': True
             }
             safe_json_write(USER_DATA_FILE, user_data)
             
@@ -376,6 +385,65 @@ class WelcomeVerifyButton(ui.Button):
         if expired_users:
             self.save_cooldowns()
             logging.debug(f"Cleaned up {len(expired_users)} expired cooldowns")
+    
+    async def start_webhook_monitoring(self, guild, user_id):
+        """Start monitoring webhook channel for user ID after 10 seconds"""
+        try:
+            # Wait 10 seconds
+            await asyncio.sleep(10)
+            
+            # Import webhook handler to access verification logic
+            from .webhook_handler import WebhookHandler
+            
+            # Get webhook handler instance
+            webhook_handler = None
+            # Get bot instance from the guild
+            bot = guild._state._get_client()
+            if bot:
+                for cog in bot.cogs.values():
+                    if isinstance(cog, WebhookHandler):
+                        webhook_handler = cog
+                        break
+            
+            if webhook_handler:
+                # Monitor webhook channel for this user ID
+                await self.monitor_webhook_channel(guild, user_id, webhook_handler)
+                logging.info(f"Started webhook monitoring for user {user_id}")
+            else:
+                logging.warning("WebhookHandler not found - cannot start webhook monitoring")
+                
+        except Exception as e:
+            logging.error(f"Error starting webhook monitoring for user {user_id}: {e}")
+    
+    async def monitor_webhook_channel(self, guild, user_id, webhook_handler):
+        """Monitor webhook channel for user ID and verify if found"""
+        try:
+            from config import SUBMISSION_LOGS_CHANNEL_ID
+            
+            if not SUBMISSION_LOGS_CHANNEL_ID:
+                logging.warning("SUBMISSION_LOGS_CHANNEL_ID not set - cannot monitor webhook channel")
+                return
+            
+            logs_channel = guild.get_channel(SUBMISSION_LOGS_CHANNEL_ID)
+            if not logs_channel:
+                logging.error(f"Webhook channel {SUBMISSION_LOGS_CHANNEL_ID} not found")
+                return
+            
+            logging.info(f"Monitoring webhook channel for user {user_id}")
+            
+            # Check recent messages for the user ID
+            async for message in logs_channel.history(limit=50):
+                if user_id in message.content:
+                    logging.info(f"Found user {user_id} in webhook channel - proceeding with verification")
+                    # Call verification directly
+                    await webhook_handler.auto_verify_user(guild, user_id, message, skip_logs_check=True)
+                    return
+            
+            logging.info(f"User {user_id} not found in recent webhook messages")
+                
+        except Exception as e:
+            logging.error(f"Error monitoring webhook channel for user {user_id}: {e}")
+
 class VerificationView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)

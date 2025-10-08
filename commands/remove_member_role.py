@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands
-import os
 import logging
 import json
+from config import MEMBER_ROLE_ID, LOGS_CHANNEL_ID, UNVERIFIED_ROLE_ID
 
 async def setup(bot):
     @bot.tree.command(name="removemember", description="Remove member role from a user")
@@ -30,7 +30,7 @@ async def setup(bot):
                     await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
                 return
             
-            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
+            member_role_id = MEMBER_ROLE_ID
             if not member_role_id:
                 if not interaction.response.is_done():
                     await interaction.response.send_message("❌ MEMBER_ROLE_ID not configured!", ephemeral=True)
@@ -79,7 +79,7 @@ async def setup(bot):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
             
             # Log to logs channel
-            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            logs_channel_id = LOGS_CHANNEL_ID
             if logs_channel_id:
                 logs_channel = interaction.guild.get_channel(logs_channel_id)
                 if logs_channel:
@@ -123,8 +123,8 @@ async def setup(bot):
                     await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
                 return
             
-            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            member_role_id = MEMBER_ROLE_ID
+            unverified_role_id = UNVERIFIED_ROLE_ID
             
             if not member_role_id or not unverified_role_id:
                 if not interaction.response.is_done():
@@ -199,7 +199,7 @@ async def setup(bot):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
             
             # Log to logs channel
-            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            logs_channel_id = LOGS_CHANNEL_ID
             if logs_channel_id:
                 logs_channel = interaction.guild.get_channel(logs_channel_id)
                 if logs_channel:

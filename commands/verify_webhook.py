@@ -2,11 +2,9 @@ import discord
 from discord.ext import commands
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from utils import safe_json_write, safe_json_read
-
-USER_DATA_FILE = 'user_data.json'
+from config import MEMBER_ROLE_ID, USER_DATA_FILE
 
 @commands.command(name="verifywebhook")
 async def verify_webhook(ctx, user_id: str = None):
@@ -48,7 +46,7 @@ async def verify_webhook(ctx, user_id: str = None):
         safe_json_write(USER_DATA_FILE, user_data)
         
         # Get member role
-        member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
+        member_role_id = MEMBER_ROLE_ID
         if member_role_id:
             member_role = ctx.guild.get_role(member_role_id)
             if member_role and member_role not in user.roles:

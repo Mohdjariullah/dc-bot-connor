@@ -1,9 +1,9 @@
 import discord
 from discord.ext import commands
-import os
 import logging
 import json
 from datetime import datetime, timezone
+from config import MEMBER_ROLE_ID, UNVERIFIED_ROLE_ID, USER_DATA_FILE
 
 async def setup(bot):
     @bot.tree.command(name="checkuser", description="Check user status and roles")
@@ -31,8 +31,8 @@ async def setup(bot):
                     await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
                 return
             
-            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            member_role_id = MEMBER_ROLE_ID
+            unverified_role_id = UNVERIFIED_ROLE_ID
             
             member_role = interaction.guild.get_role(member_role_id) if member_role_id else None
             unverified_role = interaction.guild.get_role(unverified_role_id) if unverified_role_id else None

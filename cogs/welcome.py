@@ -4,17 +4,17 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import logging
-import os
 import json
+import os
 from datetime import datetime, timezone
 from .verification import VerificationView
 import time
-
-# Import the function from main.py to avoid duplication
+from config import (
+    GUILD_ID, WELCOME_CHANNEL_ID, LOGS_CHANNEL_ID, UNVERIFIED_ROLE_ID,
+    PREMIUM_ROLE_ID, VIP_ROLE_ID, HUNDRED_K_ROLE_ID, MEMBER_ROLE_ID,
+    USER_DATA_FILE, WELCOME_MESSAGE_FILE, get_welcome_embed, ROLE_ASSIGNMENT_DELAY
+)
 from main import get_or_create_welcome_message
-
-WELCOME_MESSAGE_FILE = 'welcome_message.json'
-USER_DATA_FILE = 'user_data.json'
 
 class Welcome(commands.Cog):
     def __init__(self, bot):
@@ -29,33 +29,21 @@ class Welcome(commands.Cog):
     async def on_ready(self):
         """Setup welcome channel when bot is ready (persistent message)"""
         try:
-            guild_id = os.getenv('GUILD_ID')
-            guild = self.bot.get_guild(int(guild_id)) if guild_id and hasattr(self.bot, 'get_guild') else None
+            guild = self.bot.get_guild(GUILD_ID) if GUILD_ID and hasattr(self.bot, 'get_guild') else None
             if not guild:
-                logging.error(f"Guild with ID {guild_id} not found")
+                logging.error(f"Guild with ID {GUILD_ID} not found")
                 return
-            welcome_channel_id = os.getenv('WELCOME_CHANNEL_ID')
-            if not welcome_channel_id:
+            if not WELCOME_CHANNEL_ID:
                 logging.error("WELCOME_CHANNEL_ID is not set in environment variables")
                 return
-            welcome_channel = self.bot.get_channel(int(welcome_channel_id))
+            welcome_channel = self.bot.get_channel(WELCOME_CHANNEL_ID)
             if not welcome_channel:
-                logging.error(f"Welcome channel with ID {welcome_channel_id} not found")
+                logging.error(f"Welcome channel with ID {WELCOME_CHANNEL_ID} not found")
                 return
-            # Create new welcome embed
-            embed = discord.Embed(
-                title="🎉 Welcome to The VoCreations Mentorship! 🎉",
-                description=(
-                    "You've officially joined a community designed to help you hit $10K/month with UGC — and we're not wasting time. On your onboarding call, we'll not only get your structure in place, but also start working on placing you with clients immediately.\n\n"
-                    "But first… we need to learn about you.\n\n"
-                    "👉 **Take the Onboarding Survey now to unlock access to the Discord.**\n\n"
-                    "This survey ensures we understand your goals, current experience, and how to plug you into the mentorship the right way.\n\n"
-                    "**No survey = no access.**"
-                ),
-                color=0xFFFFFF
-            )
-            embed.set_footer(text="Book Your Onboarding Call Today!")
-            embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1370122090631532655/1401222798336200834/20.38.48_73b12891.jpg")
+            
+            # Use centralized welcome embed
+            embed = get_welcome_embed()
+            
             # Use persistent message logic
             msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())
             logging.info(f"Welcome message is now persistent: {msg.jump_url}")
@@ -78,8 +66,8 @@ class Welcome(commands.Cog):
     async def on_member_join(self, member):
         """Handle new member joins - only process premium users"""
         try:
-            guild_id = int(os.getenv('GUILD_ID', 0))
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            guild_id = GUILD_ID
+            unverified_role_id = UNVERIFIED_ROLE_ID
             
             if not guild_id or not unverified_role_id:
                 logging.error("GUILD_ID or UNVERIFIED_ROLE_ID not set")
@@ -109,19 +97,20 @@ class Welcome(commands.Cog):
             
             # Check for Fanbasis premium roles using role IDs - only process premium users
             premium_role_detected = None
-            premium_role_ids = {
-                int(os.getenv('PREMIUM_ROLE_ID', 0)): 'Premium',
-                int(os.getenv('VIP_ROLE_ID', 0)): 'VIP', 
-                int(os.getenv('HUNDREDK_ROLE_ID', 0)): '100k'
-            }
+            premium_role_ids = {}
             
-            # Remove 0 values (unset environment variables)
-            premium_role_ids = {k: v for k, v in premium_role_ids.items() if k != 0}
+            # Build premium role mapping dynamically
+            if PREMIUM_ROLE_ID:
+                premium_role_ids[PREMIUM_ROLE_ID] = None  # Will be filled with actual role name
+            if VIP_ROLE_ID:
+                premium_role_ids[VIP_ROLE_ID] = None  # Will be filled with actual role name
+            if HUNDRED_K_ROLE_ID:
+                premium_role_ids[HUNDRED_K_ROLE_ID] = None  # Will be filled with actual role name
             
             for role in member.roles:
                 if role.id in premium_role_ids:
                     premium_role_detected = role
-                    premium_role_name = premium_role_ids[role.id]
+                    premium_role_name = role.name  # Get actual role name from Discord
                     logging.info(f"Detected premium role '{premium_role_name}' (ID: {role.id}) for {member.display_name} ({member.id})")
                     break
             
@@ -183,7 +172,7 @@ class Welcome(commands.Cog):
             await self.ping_in_verify_channel(member, premium_role_name)
             
             # Log to logs channel (only for premium users)
-            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            logs_channel_id = LOGS_CHANNEL_ID
             if logs_channel_id:
                 logs_channel = guild.get_channel(logs_channel_id)
                 if logs_channel:
@@ -320,7 +309,7 @@ class Welcome(commands.Cog):
                 return
             
             current_time = datetime.now(timezone.utc).timestamp()
-            delay_seconds = int(os.getenv('ROLE_ASSIGNMENT_DELAY', 10))  # 10 seconds
+            delay_seconds = ROLE_ASSIGNMENT_DELAY
             
             # Create a list of users to remove (can't modify dict while iterating)
             users_to_remove = []
@@ -329,7 +318,7 @@ class Welcome(commands.Cog):
                 user_id = int(user_id_str)
                 
                 # Check if user is still in the guild
-                guild_id = int(os.getenv('GUILD_ID', 0))
+                guild_id = GUILD_ID
                 guild = self.bot.get_guild(guild_id)
                 if not guild:
                     continue
@@ -347,7 +336,7 @@ class Welcome(commands.Cog):
                 if button_clicked_at and lead_captured and not data.get('has_access', False) and not data.get('role_assigned', False):
                     if current_time - button_clicked_at >= delay_seconds:
                         # Check if user actually has member role before assigning
-                        member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
+                        member_role_id = MEMBER_ROLE_ID
                         if member_role_id:
                             guild = self.bot.get_guild(guild_id)
                             if guild:
@@ -385,9 +374,9 @@ class Welcome(commands.Cog):
     async def assign_member_role(self, user_id):
         """Assign member role to user"""
         try:
-            guild_id = int(os.getenv('GUILD_ID', 0))
-            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
-            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            guild_id = GUILD_ID
+            member_role_id = MEMBER_ROLE_ID
+            logs_channel_id = LOGS_CHANNEL_ID
             
             if not guild_id or not member_role_id:
                 logging.error("GUILD_ID or MEMBER_ROLE_ID not set")
@@ -474,9 +463,9 @@ class Welcome(commands.Cog):
     async def remove_unverified_role(self, user_id):
         """Remove unverified role from user"""
         try:
-            guild_id = int(os.getenv('GUILD_ID', 0))
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
-            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            guild_id = GUILD_ID
+            unverified_role_id = UNVERIFIED_ROLE_ID
+            logs_channel_id = LOGS_CHANNEL_ID
             
             if not guild_id or not unverified_role_id:
                 logging.error("GUILD_ID or UNVERIFIED_ROLE_ID not set")
@@ -545,9 +534,9 @@ class Welcome(commands.Cog):
     async def sync_user_data_with_roles(self):
         """Sync user data with actual Discord roles to prevent incorrect assignments"""
         try:
-            guild_id = int(os.getenv('GUILD_ID', 0))
-            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            guild_id = GUILD_ID
+            member_role_id = MEMBER_ROLE_ID
+            unverified_role_id = UNVERIFIED_ROLE_ID
             
             if not guild_id:
                 logging.error("GUILD_ID not set")

@@ -1,8 +1,8 @@
 import discord
 from discord.ext import commands
-import os
 import logging
 import json
+from config import UNVERIFIED_ROLE_ID, LOGS_CHANNEL_ID
 
 async def setup(bot):
     @bot.tree.command(name="addunverified", description="Add unverified role to a user")
@@ -23,7 +23,7 @@ async def setup(bot):
             return await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
         
         try:
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            unverified_role_id = UNVERIFIED_ROLE_ID
             if not unverified_role_id:
                 await interaction.response.send_message("❌ UNVERIFIED_ROLE_ID not configured!", ephemeral=True)
                 return
@@ -76,7 +76,7 @@ async def setup(bot):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             
             # Log to logs channel
-            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            logs_channel_id = LOGS_CHANNEL_ID
             if logs_channel_id:
                 logs_channel = interaction.guild.get_channel(logs_channel_id)
                 if logs_channel:

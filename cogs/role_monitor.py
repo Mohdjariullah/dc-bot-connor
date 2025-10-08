@@ -1,51 +1,71 @@
 import discord
 from discord.ext import commands
 import logging
-import os
 import asyncio
 from datetime import datetime, timezone
 from utils import safe_json_write, safe_json_read
-
-# Role IDs from environment variables
-UNVERIFIED_ROLE_ID = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
-VIP_ROLE_ID = int(os.getenv('VIP_ROLE_ID', 0))
-HUNDRED_K_ROLE_ID = int(os.getenv('HUNDRED_K_ROLE_ID', 0))
-SUBMISSION_LOGS_CHANNEL_ID = int(os.getenv('SUBMISSION_LOGS_CHANNEL_ID', 0))
-WELCOME_CHANNEL_ID = int(os.getenv('WELCOME_CHANNEL_ID', 0))
-
-USER_DATA_FILE = 'user_data.json'
+from config import (
+    UNVERIFIED_ROLE_ID, WELCOME_CHANNEL_ID,
+    USER_DATA_FILE, get_premium_role_ids
+)
 
 class RoleMonitor(commands.Cog):
     """Monitor premium role assignments and handle verification flow"""
     
     def __init__(self, bot):
         self.bot = bot
-        self.premium_role_ids = {}
-        
-        # Build premium role IDs from environment variables
-        if VIP_ROLE_ID:
-            self.premium_role_ids[VIP_ROLE_ID] = 'VIP'
-        if HUNDRED_K_ROLE_ID:
-            self.premium_role_ids[HUNDRED_K_ROLE_ID] = '100k'
+        self.premium_role_ids = get_premium_role_ids()
+        logging.info(f"Role monitor initialized with premium role IDs: {list(self.premium_role_ids.keys())}")
         
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
         """Monitor when members get premium roles assigned"""
         try:
+            # Debug logging
+            logging.info(f"Member update detected for {after.display_name} ({after.id})")
+            
+            # Skip if no premium roles configured
+            if not self.premium_role_ids:
+                logging.info("No premium roles configured, skipping")
+                return
+            
+            # Skip if this is a bot user
+            if after.bot:
+                logging.info(f"Skipping bot user {after.display_name}")
+                return
+                
             # Check if any premium roles were added
             before_roles = {role.id for role in before.roles}
             after_roles = {role.id for role in after.roles}
             
+            logging.info(f"Before roles: {[role.name for role in before.roles]}")
+            logging.info(f"After roles: {[role.name for role in after.roles]}")
+            logging.info(f"Monitoring for premium role IDs: {list(self.premium_role_ids.keys())}")
+            
             # Find newly added premium roles
             new_premium_roles = []
-            for role_id, role_name in self.premium_role_ids.items():
+            for role_id in self.premium_role_ids.keys():
                 if role_id in after_roles and role_id not in before_roles:
+                    # Get actual role name from Discord
+                    role = after.guild.get_role(role_id)
+                    role_name = role.name if role else f"Role_{role_id}"
                     new_premium_roles.append((role_id, role_name))
+                    logging.info(f"Detected NEW {role_name} role assignment for {after.display_name} ({after.id})")
             
             if not new_premium_roles:
                 return
+            
+            # Check if user is already verified in user_data.json
+            user_data = safe_json_read(USER_DATA_FILE, {})
+            user_id = str(after.id)
+            
+            if user_id in user_data:
+                user_info = user_data[user_id]
+                if user_info.get('survey_status') == 'verified' or user_info.get('has_access', False):
+                    logging.info(f"User {after.display_name} ({after.id}) already verified, skipping role removal")
+                    return
                 
-            logging.info(f"Detected premium role assignment(s) for {after.display_name} ({after.id}): {[role[1] for role in new_premium_roles]}")
+            logging.info(f"Processing {len(new_premium_roles)} new premium role assignment(s) for {after.display_name} ({after.id}): {[role[1] for role in new_premium_roles]}")
             
             # Process each newly assigned premium role
             for role_id, role_name in new_premium_roles:
@@ -96,62 +116,58 @@ class RoleMonitor(commands.Cog):
             logging.error(f"Error handling premium role assignment: {e}")
     
     async def ping_in_welcome_verify(self, member, role_name):
-        """Ping user in #welcome-verify channel and delete message"""
+        """Ping user in welcome channel and delete message"""
         try:
             guild = member.guild
-            welcome_verify_channel = None
             
-            # Find welcome-verify channel
-            for channel in guild.text_channels:
-                if channel.name == 'welcome-verify':
-                    welcome_verify_channel = channel
-                    break
+            # Use welcome channel ID directly
+            welcome_channel = guild.get_channel(WELCOME_CHANNEL_ID)
             
-            if welcome_verify_channel:
+            if welcome_channel:
                 # Send ping message and delete it after 6 seconds
-                message = await welcome_verify_channel.send(f"{member.mention}")
+                message = await welcome_channel.send(f"{member.mention}")
                 await asyncio.sleep(6)
                 await message.delete()
-                logging.info(f"Ghost pinged {member.display_name} ({member.id}) in #welcome-verify channel")
+                logging.info(f"Ghost pinged {member.display_name} ({member.id}) in welcome channel")
             else:
-                logging.warning("welcome-verify channel not found")
+                logging.warning(f"Welcome channel {WELCOME_CHANNEL_ID} not found")
                 
         except Exception as e:
-            logging.error(f"Error pinging in welcome-verify channel: {e}")
+            logging.error(f"Error pinging in welcome channel: {e}")
     
     async def send_verification_dm(self, member, role_name):
         """Send DM with verification message and button"""
         try:
-            # Welcome channel ID from environment
-            welcome_channel_id = WELCOME_CHANNEL_ID
-            
-            # Create the main message text
-            message_text = f"Hey {member.display_name}, we noticed you've been assigned the **{role_name}** role.\nPlease complete the verification survey to unlock your access."
-            
-            # Create embed like the image shows
+            # Send welcome DM with verification button
             embed = discord.Embed(
                 title="👋 Welcome to the Server!",
                 description=(
-                    "To access your subscription and the community, please complete the verification process.\n"
-                    "Click the button below to start verifying!\n"
-                    "We're excited to have you with us!\n"
-                    "Join our community today!"
+                    "To access your subscription and the community, please complete the verification process.\n\n"
+                    "Click the button below to start verifying!\n\n"
+                    "We're excited to have you with us!"
                 ),
-                color=0x00ff00
+                color=0xF00000
             )
+            embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1370122090631532655/1401222798336200834/20.38.48_73b12891.jpg")
+            embed.set_footer(text="Join our community today!")
             
-            # Add the welcome channel ID as a field if available
+            # Try to add a button to the welcome channel if possible
+            welcome_channel_id = WELCOME_CHANNEL_ID
             if welcome_channel_id:
-                embed.add_field(
-                    name="📋 Welcome Channel",
-                    value=f"<#{welcome_channel_id}>",
-                    inline=False
-                )
-            
-            # Create view with button
-            view = VerificationDMView()
-            
-            await member.send(content=message_text, embed=embed, view=view)
+                welcome_channel = member.guild.get_channel(welcome_channel_id)
+                if welcome_channel:
+                    view = discord.ui.View()
+                    view.add_item(discord.ui.Button(
+                        label="Go to Verification",
+                        style=discord.ButtonStyle.link,
+                        url=welcome_channel.jump_url
+                    ))
+                    await member.send(embed=embed, view=view)
+                else:
+                    await member.send(embed=embed)
+            else:
+                await member.send(embed=embed)
+                
             logging.info(f"Sent verification DM to {member.display_name} ({member.id})")
             
         except discord.Forbidden:
@@ -159,53 +175,6 @@ class RoleMonitor(commands.Cog):
         except Exception as e:
             logging.error(f"Error sending verification DM: {e}")
 
-class VerificationDMView(discord.ui.View):
-    """View for the verification DM button"""
-    
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(VerificationDMButton())
-
-class VerificationDMButton(discord.ui.Button):
-    """Button to redirect to verification channel"""
-    
-    def __init__(self):
-        super().__init__(
-            style=discord.ButtonStyle.green,
-            label="Start Verification",
-            emoji="🔗"
-        )
-    
-    async def callback(self, interaction: discord.Interaction):
-        """Handle button click"""
-        try:
-            # Welcome channel ID from environment
-            welcome_channel_id = WELCOME_CHANNEL_ID
-            
-            if welcome_channel_id:
-                # Create Discord message link to the welcome channel
-                guild_id = interaction.guild.id if interaction.guild else 0
-                message_link = f"https://discord.com/channels/{guild_id}/{welcome_channel_id}"
-                
-                await interaction.response.send_message(
-                    f"Please visit <#{welcome_channel_id}> to complete your verification!\n\n[Click here to go directly to the channel]({message_link})",
-                    ephemeral=True
-                )
-            else:
-                await interaction.response.send_message(
-                    "Please visit the welcome channel to complete your verification!",
-                    ephemeral=True
-                )
-                
-        except Exception as e:
-            logging.error(f"Error in verification DM button callback: {e}")
-            try:
-                await interaction.response.send_message(
-                    "An error occurred. Please try again later.",
-                    ephemeral=True
-                )
-            except:
-                pass
 
 class WelcomeVerifyView(discord.ui.View):
     """View for the welcome-verify channel message"""
