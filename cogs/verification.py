@@ -142,16 +142,21 @@ class OnboardingButton(ui.Button):
             premium_role_name = existing_data.get('premium_role_name')
             
             # If user doesn't have unverified role, add it
+            unverified_role_actually_assigned = False
             if not has_unverified_role and unverified_role_id and interaction.guild:
                 unverified_role = interaction.guild.get_role(unverified_role_id)
                 if unverified_role:
                     try:
                         await interaction.user.add_roles(unverified_role)
                         has_unverified_role = True
+                        unverified_role_actually_assigned = True
                         logging.info(f"Added unverified role to user {user_id}")
                     except Exception as e:
                         logging.error(f"Error adding unverified role to user {user_id}: {e}")
                         # Continue processing even if role assignment fails
+            else:
+                # User already has unverified role
+                unverified_role_actually_assigned = has_unverified_role
             
             # Update user data to mark as having clicked the button (waiting for Typeform submission)
             user_data = safe_json_read(USER_DATA_FILE, {})
@@ -162,7 +167,7 @@ class OnboardingButton(ui.Button):
                 'premium_role_id': existing_data.get('premium_role_id'),
                 'premium_role_name': existing_data.get('premium_role_name'),
                 'survey_status': 'pending',
-                'unverified_role_assigned': True
+                'unverified_role_assigned': unverified_role_actually_assigned
             }
             safe_json_write(USER_DATA_FILE, user_data)
             
@@ -175,8 +180,8 @@ class OnboardingButton(ui.Button):
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
             
-            # Start monitoring webhook channel for this user
-            await self.start_webhook_monitoring(interaction.guild, user_id)
+            # Start enhanced webhook monitoring for this user
+            await self.start_enhanced_webhook_monitoring(interaction.guild, user_id)
             
             logging.info(f"Showed Typeform link to user {user_id}")
             
@@ -258,6 +263,37 @@ class OnboardingButton(ui.Button):
                 
         except Exception as e:
             logging.error(f"Error monitoring webhook channel for user {user_id}: {e}")
+    
+    async def start_enhanced_webhook_monitoring(self, guild, user_id):
+        """Start enhanced webhook monitoring using the consolidated system"""
+        try:
+            # Get webhook handler instance
+            from .webhook_handler import WebhookHandler
+            
+            # Get bot instance from the guild
+            bot = guild._state._get_client()
+            if bot:
+                # Find webhook handler
+                webhook_handler = None
+                for cog in bot.cogs.values():
+                    if isinstance(cog, WebhookHandler):
+                        webhook_handler = cog
+                        break
+                
+                if webhook_handler:
+                    # Start enhanced monitoring using the consolidated system
+                    await webhook_handler.start_enhanced_monitoring(guild, user_id)
+                    logging.info(f"Started enhanced webhook monitoring for user {user_id}")
+                else:
+                    logging.warning("WebhookHandler not found - cannot start enhanced monitoring")
+            else:
+                logging.error("Bot instance not found - cannot start enhanced monitoring")
+                
+        except Exception as e:
+            logging.error(f"Error starting enhanced webhook monitoring for user {user_id}: {e}")
+            # Fallback to old monitoring system
+            await self.start_webhook_monitoring(guild, user_id)
+
 
 class WelcomeVerifyButton(ui.Button):
     def __init__(self):
@@ -319,16 +355,82 @@ class WelcomeVerifyButton(ui.Button):
             user_data = safe_json_read(USER_DATA_FILE, {})
             user_info = user_data.get(user_id, {})
             
+            # Check roles
+            member_role_id = MEMBER_ROLE_ID
+            unverified_role_id = UNVERIFIED_ROLE_ID
+            
+            has_member_role = False
+            has_unverified_role = False
+            
+            if interaction.guild:
+                if member_role_id:
+                    member_role = interaction.guild.get_role(member_role_id)
+                    if member_role and member_role in interaction.user.roles:
+                        has_member_role = True
+                
+                if unverified_role_id:
+                    unverified_role = interaction.guild.get_role(unverified_role_id)
+                    if unverified_role and unverified_role in interaction.user.roles:
+                        has_unverified_role = True
+            
+            # Check if user already has member role AND doesn't have unverified role
+            if has_member_role and not has_unverified_role:
+                embed = discord.Embed(
+                    title="✅ Already Verified!",
+                    description="You already have access to the community.",
+                    color=0x00ff00
+                )
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(embed=embed, ephemeral=True)
+                except Exception as e:
+                    logging.error(f"Error sending already verified response: {e}")
+                logging.info(f"User {user_id} already has member role and no unverified role")
+                return
+            
+            # Check if user is in user_data.json (only users who went through premium role assignment)
+            if user_id not in user_data:
+                # User not in user_data.json - they shouldn't be using this button
+                embed = discord.Embed(
+                    title="❌ Access Denied",
+                    description="This verification is only for premium users. Please contact support if you believe this is an error.",
+                    color=0xff0000
+                )
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(embed=embed, ephemeral=True)
+                except Exception as e:
+                    logging.error(f"Error sending access denied response: {e}")
+                logging.info(f"User {user_id} not in user_data.json - tried to use welcome verify button")
+                return
+            
             # Get premium role info
             premium_role_name = user_info.get('premium_role_name', 'Premium')
+            
+            # If user doesn't have unverified role, add it
+            unverified_role_actually_assigned = False
+            if not has_unverified_role and unverified_role_id and interaction.guild:
+                unverified_role = interaction.guild.get_role(unverified_role_id)
+                if unverified_role:
+                    try:
+                        await interaction.user.add_roles(unverified_role)
+                        has_unverified_role = True
+                        unverified_role_actually_assigned = True
+                        logging.info(f"Added unverified role to user {user_id} via welcome verify button")
+                    except Exception as e:
+                        logging.error(f"Error adding unverified role to user {user_id}: {e}")
+                        # Continue processing even if role assignment fails
+            else:
+                # User already has unverified role
+                unverified_role_actually_assigned = has_unverified_role
             
             # Use centralized survey embed
             embed = get_survey_embed(premium_role_name, user_id)
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
             
-            # Start monitoring webhook channel for this user
-            await self.start_webhook_monitoring(interaction.guild, user_id)
+            # Start enhanced webhook monitoring for this user
+            await self.start_enhanced_webhook_monitoring(interaction.guild, user_id)
             
             # Update user data to mark as having clicked the button (waiting for Typeform submission)
             user_data = safe_json_read(USER_DATA_FILE, {})
@@ -339,7 +441,7 @@ class WelcomeVerifyButton(ui.Button):
                 'premium_role_id': existing_data.get('premium_role_id'),
                 'premium_role_name': existing_data.get('premium_role_name'),
                 'survey_status': 'pending',
-                'unverified_role_assigned': True
+                'unverified_role_assigned': unverified_role_actually_assigned
             }
             safe_json_write(USER_DATA_FILE, user_data)
             
@@ -443,6 +545,36 @@ class WelcomeVerifyButton(ui.Button):
                 
         except Exception as e:
             logging.error(f"Error monitoring webhook channel for user {user_id}: {e}")
+    
+    async def start_enhanced_webhook_monitoring(self, guild, user_id):
+        """Start enhanced webhook monitoring using the consolidated system"""
+        try:
+            # Get webhook handler instance
+            from .webhook_handler import WebhookHandler
+            
+            # Get bot instance from the guild
+            bot = guild._state._get_client()
+            if bot:
+                # Find webhook handler
+                webhook_handler = None
+                for cog in bot.cogs.values():
+                    if isinstance(cog, WebhookHandler):
+                        webhook_handler = cog
+                        break
+                
+                if webhook_handler:
+                    # Start enhanced monitoring using the consolidated system
+                    await webhook_handler.start_enhanced_monitoring(guild, user_id)
+                    logging.info(f"Started enhanced webhook monitoring for user {user_id}")
+                else:
+                    logging.warning("WebhookHandler not found - cannot start enhanced monitoring")
+            else:
+                logging.error("Bot instance not found - cannot start enhanced monitoring")
+                
+        except Exception as e:
+            logging.error(f"Error starting enhanced webhook monitoring for user {user_id}: {e}")
+            # Fallback to old monitoring system
+            await self.start_webhook_monitoring(guild, user_id)
 
 class VerificationView(ui.View):
     def __init__(self):

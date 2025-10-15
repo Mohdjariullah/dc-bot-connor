@@ -33,26 +33,47 @@ async def setup(bot):
                 with open(CONVERSATION_CONTEXT_FILE, 'r') as f:
                     context_data = f.read()
                 
-                # Send the file content to the owner via DM
-                dm_sent = False
-                try:
-                    # Create a Discord file object from the content
-                    file_content = discord.File(
-                        io.BytesIO(context_data.encode('utf-8')), 
-                        filename='ai_conversation_context_backup.json'
-                    )
-                    
-                    # Send DM with the file
-                    await interaction.user.send(
-                        content="📄 **AI Conversation Context Backup**\nHere's the conversation context that was cleared:",
-                        file=file_content
-                    )
-                    logging.info(f"Conversation context backup sent to owner {interaction.user.id} ({interaction.user.name})")
-                    dm_sent = True
-                    
-                except discord.Forbidden:
-                    logging.warning(f"Could not send DM to owner {interaction.user.id} - DMs may be disabled")
-                    # Still proceed with clearing, but mention the DM issue
+                # Send the file content to ALL owners via DM
+                from main import OWNER_USER_IDS
+                owners_dm_sent = 0
+                owners_dm_failed = []
+                initiator_name = interaction.user.name
+                initiator_id = interaction.user.id
+                
+                for owner_id in OWNER_USER_IDS:
+                    try:
+                        owner_user = interaction.client.get_user(owner_id)
+                        if owner_user is None:
+                            try:
+                                owner_user = await interaction.client.fetch_user(owner_id)
+                            except Exception:
+                                owner_user = None
+                        
+                        if owner_user is None:
+                            owners_dm_failed.append(owner_id)
+                            continue
+                        
+                        # Create a fresh Discord file object per send
+                        file_content = discord.File(
+                            io.BytesIO(context_data.encode('utf-8')),
+                            filename='ai_conversation_context_backup.json'
+                        )
+                        await owner_user.send(
+                            content=(
+                                "📄 **AI Conversation Context Backup**\n"
+                                f"Initiated by: **{initiator_name}** (ID: `{initiator_id}`)\n\n"
+                                "Here's the conversation context that was cleared:"
+                            ),
+                            file=file_content
+                        )
+                        logging.info(f"Conversation context backup sent to owner {owner_id}")
+                        owners_dm_sent += 1
+                    except discord.Forbidden:
+                        logging.warning(f"Could not send DM to owner {owner_id} - DMs may be disabled")
+                        owners_dm_failed.append(owner_id)
+                    except Exception as dm_error:
+                        logging.error(f"Error sending DM to owner {owner_id}: {dm_error}")
+                        owners_dm_failed.append(owner_id)
                 
                 # Clear the conversation context file by writing an empty object
                 with open(CONVERSATION_CONTEXT_FILE, 'w') as f:
@@ -60,10 +81,16 @@ async def setup(bot):
                 
                 logging.info(f"Conversation context cleared by owner {interaction.user.id} ({interaction.user.name})")
                 
-                dm_status = " and backup sent to your DMs" if dm_sent else " (couldn't send DM backup - DMs may be disabled)"
+                if owners_dm_sent > 0 and not owners_dm_failed:
+                    dm_status = f" and backup sent to all {owners_dm_sent} owners via DM"
+                elif owners_dm_sent > 0 and owners_dm_failed:
+                    dm_status = f" and backup sent to {owners_dm_sent} owner(s) (failed for {len(owners_dm_failed)})"
+                else:
+                    dm_status = " (couldn't DM any owners - DMs may be disabled)"
                 if not interaction.response.is_done():
                     await interaction.response.send_message(
-                        f"✅ All AI conversation context messages have been cleared successfully!{dm_status}", ephemeral=True
+                        f"✅ All AI conversation context messages have been cleared successfully!{dm_status}\n"
+                        f"👤 Initiated by: **{initiator_name}** (ID: `{initiator_id}`)", ephemeral=True
                     )
                     
             except Exception as file_error:

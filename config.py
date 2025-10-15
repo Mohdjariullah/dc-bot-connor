@@ -12,7 +12,6 @@ SUBMISSION_LOGS_CHANNEL_ID = int(os.getenv('SUBMISSION_LOGS_CHANNEL_ID', 0))
 
 
 # Role IDs
-PREMIUM_ROLE_ID = int(os.getenv('PREMIUM_ROLE_ID', 0))
 VIP_ROLE_ID = int(os.getenv('VIP_ROLE_ID', 0))
 HUNDRED_K_ROLE_ID = int(os.getenv('HUNDRED_K_ROLE_ID', 0))
 MEMBER_ROLE_ID = int(os.getenv('MEMBER_ROLE_ID', 0))
@@ -107,7 +106,7 @@ def get_survey_embed(premium_role_name, user_id):
         color=0x00ff00
     )
     
-    # Add Typeform link with user ID parameter
+    # Add Typeform link with user ID as hash fragment (not query)
     typeform_link = f"{TYPEFORM_LINK}#auth_code={user_id}"
     embed.add_field(
         name="🔗 Complete Survey",

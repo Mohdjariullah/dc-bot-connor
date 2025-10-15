@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 import logging
 import re
+import asyncio
+import time
 from datetime import datetime, timezone
 from utils import safe_json_write, safe_json_read
 from config import (
@@ -15,6 +17,16 @@ class WebhookHandler(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
+        # Enhanced monitoring system
+        self.active_monitors = {}  # Track active monitoring tasks
+        self.monitoring_config = {
+            'max_attempts': 120,      # Monitor for up to ~2 hours (with backoff)
+            'initial_interval': 20,   # Check every 20 seconds initially
+            'max_interval': 180,      # Cap interval at 3 minutes
+            'max_history': 200,       # Check last 200 messages each pass
+            'backoff_multiplier': 1.3, # Slightly faster backoff
+            'backoff_threshold': 10   # Start backoff after 10 attempts
+        }
         
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -42,6 +54,10 @@ class WebhookHandler(commands.Cog):
                 
             # Extract auth_code from the message
             auth_code = self.extract_auth_code_from_message(message)
+            if not auth_code:
+                # Try to extract from the raw webhook data if available
+                auth_code = self.extract_auth_code_from_webhook_data(message)
+                
             if not auth_code:
                 logging.warning("Typeform webhook message detected but no auth_code found")
                 logging.debug(f"Message content: {message.content}")
@@ -189,6 +205,78 @@ class WebhookHandler(commands.Cog):
             logging.error(f"Error extracting auth_code: {e}")
             return None
 
+    def extract_auth_code_from_webhook_data(self, message):
+        """Extract auth_code from raw webhook data if available"""
+        try:
+            # Check if message has raw data (this would be available if the webhook
+            # sends the actual Typeform webhook payload as an attachment or in content)
+            
+            # Look for JSON data in the message content or attachments
+            content = message.content or ""
+            
+            # Try to find JSON data in the message
+            import json
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                try:
+                    webhook_data = json.loads(json_match.group())
+                    
+                    # Check for authCode field (camelCase as shown in your webhook data)
+                    if 'authCode' in webhook_data:
+                        auth_code = webhook_data['authCode']
+                        if auth_code and auth_code != 'Not provided':
+                            # Check if it's a Discord user ID
+                            user_id_match = re.search(r'(\d{17,19})', str(auth_code))
+                            if user_id_match:
+                                logging.info(f"Found auth_code in webhook data: {user_id_match.group(1)}")
+                                return user_id_match.group(1)
+                    
+                    # Also check for auth_code field (snake_case)
+                    if 'auth_code' in webhook_data:
+                        auth_code = webhook_data['auth_code']
+                        if auth_code and auth_code != 'Not provided':
+                            user_id_match = re.search(r'(\d{17,19})', str(auth_code))
+                            if user_id_match:
+                                logging.info(f"Found auth_code in webhook data: {user_id_match.group(1)}")
+                                return user_id_match.group(1)
+                                
+                except json.JSONDecodeError:
+                    pass
+            
+            # Check attachments for JSON files
+            for attachment in message.attachments:
+                if attachment.filename.endswith('.json'):
+                    try:
+                        # Download and parse the JSON file
+                        import aiohttp
+                        import asyncio
+                        
+                        async def fetch_json():
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(attachment.url) as response:
+                                    if response.status == 200:
+                                        return await response.json()
+                                    return None
+                        
+                        # Run the async function
+                        webhook_data = asyncio.create_task(fetch_json())
+                        if webhook_data:
+                            if 'authCode' in webhook_data:
+                                auth_code = webhook_data['authCode']
+                                if auth_code and auth_code != 'Not provided':
+                                    user_id_match = re.search(r'(\d{17,19})', str(auth_code))
+                                    if user_id_match:
+                                        logging.info(f"Found auth_code in JSON attachment: {user_id_match.group(1)}")
+                                        return user_id_match.group(1)
+                    except Exception as e:
+                        logging.error(f"Error processing JSON attachment: {e}")
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f"Error extracting auth_code from webhook data: {e}")
+            return None
+
     async def auto_verify_user(self, guild, user_id, webhook_message, skip_logs_check=False):
         """Automatically verify premium user based on auth_code from Typeform webhook"""
         try:
@@ -296,8 +384,8 @@ class WebhookHandler(commands.Cog):
                 logging.error(f"Submission logs channel {SUBMISSION_LOGS_CHANNEL_ID} not found")
                 return False
             
-            # Search for the auth_code in recent messages (last 100 messages)
-            async for message in logs_channel.history(limit=100):
+            # Search for the auth_code in recent messages (last 200 messages)
+            async for message in logs_channel.history(limit=200):
                 # Check message content for auth_code
                 if auth_code in message.content:
                     logging.info(f"Found auth_code {auth_code} in submission logs")
@@ -323,6 +411,217 @@ class WebhookHandler(commands.Cog):
         except Exception as e:
             logging.error(f"Error verifying auth_code in logs: {e}")
             return False
+
+    async def start_enhanced_monitoring(self, guild, user_id):
+        """Start enhanced continuous monitoring for a user"""
+        try:
+            # Check if already monitoring this user
+            if user_id in self.active_monitors:
+                logging.info(f"User {user_id} already being monitored, skipping")
+                return
+            
+            # Wait initial delay
+            await asyncio.sleep(10)
+            
+            # Check early exit conditions
+            if await self._should_stop_monitoring(user_id):
+                return
+            
+            # Create monitoring task
+            monitoring_task = asyncio.create_task(
+                self._continuous_monitor(guild, user_id)
+            )
+            
+            # Track the task
+            self.active_monitors[user_id] = {
+                'task': monitoring_task,
+                'started_at': time.time(),
+                'guild_id': guild.id
+            }
+            
+            logging.info(f"Started enhanced webhook monitoring for user {user_id}")
+            
+        except Exception as e:
+            logging.error(f"Error starting enhanced monitoring for user {user_id}: {e}")
+
+    async def _continuous_monitor(self, guild, user_id):
+        """Main monitoring loop with retry logic and exponential backoff"""
+        try:
+            # Get monitoring configuration
+            config = self.monitoring_config
+            check_interval = config['initial_interval']
+            last_checked_message_id = await self._get_latest_message_id(guild)
+            
+            logging.info(f"Starting continuous monitoring for user {user_id} (max {config['max_attempts']} attempts)")
+            
+            for attempt in range(1, config['max_attempts'] + 1):
+                try:
+                    # Check exit conditions
+                    if await self._should_stop_monitoring(user_id):
+                        logging.info(f"User {user_id} verification completed, stopping monitoring")
+                        return
+                    
+                    # Perform monitoring check
+                    found_webhook = await self._check_for_webhook_in_monitoring(
+                        guild, user_id, last_checked_message_id, config['max_history']
+                    )
+                    
+                    if found_webhook:
+                        logging.info(f"Successfully verified user {user_id} via enhanced monitoring (attempt {attempt})")
+                        return
+                    
+                    # Update last checked message ID for next iteration (move watermark forward)
+                    latest_id = await self._get_latest_message_id(guild)
+                    if latest_id:
+                        last_checked_message_id = latest_id
+                    
+                    # Calculate next check interval (exponential backoff)
+                    if attempt > config['backoff_threshold']:
+                        check_interval = min(
+                            check_interval * config['backoff_multiplier'],
+                            config['max_interval']
+                        )
+                    
+                    logging.debug(f"Monitoring attempt {attempt}/{config['max_attempts']} for user {user_id} - next check in {check_interval}s")
+                    
+                    # Wait before next check
+                    await asyncio.sleep(check_interval)
+                    
+                except Exception as check_error:
+                    logging.error(f"Error in monitoring attempt {attempt} for user {user_id}: {check_error}")
+                    # Wait longer on error
+                    await asyncio.sleep(min(check_interval * 2, config['max_interval']))
+            
+            # Monitoring timed out
+            await self._handle_monitoring_timeout(guild, user_id, config['max_attempts'])
+            
+        except Exception as e:
+            logging.error(f"Critical error in continuous monitoring for user {user_id}: {e}")
+        finally:
+            # Clean up monitoring task
+            if user_id in self.active_monitors:
+                del self.active_monitors[user_id]
+
+    async def _should_stop_monitoring(self, user_id):
+        """Check if monitoring should stop (user verified or left server)"""
+        try:
+            # Check if user is verified
+            user_data = safe_json_read('user_data.json', {})
+            if user_id in user_data and user_data[user_id].get('survey_status') == 'verified':
+                return True
+            
+            # Check if user is still in any monitored guild
+            for monitor_info in self.active_monitors.values():
+                guild = self.bot.get_guild(monitor_info['guild_id'])
+                if guild:
+                    member = guild.get_member(int(user_id))
+                    if not member:
+                        logging.info(f"User {user_id} left guild {guild.id}, stopping monitoring")
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error checking stop conditions for user {user_id}: {e}")
+            return False
+
+    async def _check_for_webhook_in_monitoring(self, guild, user_id, last_message_id, max_history):
+        """Check for webhook messages containing the user ID during monitoring"""
+        try:
+            if not SUBMISSION_LOGS_CHANNEL_ID:
+                logging.warning("SUBMISSION_LOGS_CHANNEL_ID not set")
+                return False
+            
+            logs_channel = guild.get_channel(SUBMISSION_LOGS_CHANNEL_ID)
+            if not logs_channel:
+                logging.error(f"Webhook channel {SUBMISSION_LOGS_CHANNEL_ID} not found")
+                return False
+            
+            messages_checked = 0
+
+            if last_message_id:
+                # Only fetch messages AFTER the last checked message to catch new ones
+                try:
+                    after_obj = discord.Object(id=last_message_id)
+                    history_iter = logs_channel.history(limit=max_history, after=after_obj)
+                except Exception:
+                    history_iter = logs_channel.history(limit=max_history)
+            else:
+                history_iter = logs_channel.history(limit=max_history)
+
+            async for message in history_iter:
+                
+                messages_checked += 1
+                
+                # Check if this message contains the user ID
+                if user_id in message.content:
+                    logging.info(f"Found user {user_id} in webhook message during monitoring")
+                    try:
+                        # Call verification directly
+                        await self.auto_verify_user(guild, user_id, message, skip_logs_check=True)
+                        return True
+                    except Exception as verify_error:
+                        logging.error(f"Error verifying user {user_id}: {verify_error}")
+                        # Continue monitoring even if verification fails
+            
+            logging.debug(f"Checked {messages_checked} messages for user {user_id}, no webhook found")
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error checking for webhook for user {user_id}: {e}")
+            return False
+
+    async def _get_latest_message_id(self, guild):
+        """Get the ID of the latest message in the webhook channel"""
+        try:
+            if not SUBMISSION_LOGS_CHANNEL_ID:
+                return None
+            
+            logs_channel = guild.get_channel(SUBMISSION_LOGS_CHANNEL_ID)
+            if not logs_channel:
+                return None
+            
+            async for message in logs_channel.history(limit=1):
+                return message.id
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f"Error getting latest message ID: {e}")
+            return None
+
+    async def _handle_monitoring_timeout(self, guild, user_id, max_attempts):
+        """Handle monitoring timeout by notifying user"""
+        try:
+            logging.warning(f"Webhook monitoring timed out for user {user_id} after {max_attempts} attempts")
+            
+            # Send timeout notification to user
+            user = guild.get_member(int(user_id))
+            if user:
+                embed = discord.Embed(
+                    title="⏰ Verification Timeout",
+                    description=(
+                        "We didn't receive your survey submission automatically.\n\n"
+                        "**What to do next:**\n"
+                        "• If you completed the survey, please contact support\n"
+                        "• If you haven't completed it yet, please do so using the link provided\n"
+                        "• You can try the verification process again\n\n"
+                        "We're here to help! Please reach out if you need assistance."
+                    ),
+                    color=0xffa500
+                )
+                embed.set_footer(text="This is an automated message - no action required if you haven't submitted yet")
+                
+                try:
+                    await user.send(embed=embed)
+                    logging.info(f"Sent timeout notification to user {user_id}")
+                except discord.Forbidden:
+                    logging.warning(f"Could not send timeout notification to user {user_id} - DMs disabled")
+                except Exception as send_error:
+                    logging.error(f"Error sending timeout notification to user {user_id}: {send_error}")
+            
+        except Exception as e:
+            logging.error(f"Error handling monitoring timeout for user {user_id}: {e}")
 
     @commands.command(name="test_webhook")
     @commands.has_permissions(administrator=True)

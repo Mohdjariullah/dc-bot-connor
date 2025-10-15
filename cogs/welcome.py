@@ -11,7 +11,7 @@ from .verification import VerificationView
 import time
 from config import (
     GUILD_ID, WELCOME_CHANNEL_ID, LOGS_CHANNEL_ID, UNVERIFIED_ROLE_ID,
-    PREMIUM_ROLE_ID, VIP_ROLE_ID, HUNDRED_K_ROLE_ID, MEMBER_ROLE_ID,
+    VIP_ROLE_ID, HUNDRED_K_ROLE_ID, MEMBER_ROLE_ID,
     USER_DATA_FILE, WELCOME_MESSAGE_FILE, get_welcome_embed, ROLE_ASSIGNMENT_DELAY
 )
 from main import get_or_create_welcome_message
@@ -100,8 +100,6 @@ class Welcome(commands.Cog):
             premium_role_ids = {}
             
             # Build premium role mapping dynamically
-            if PREMIUM_ROLE_ID:
-                premium_role_ids[PREMIUM_ROLE_ID] = None  # Will be filled with actual role name
             if VIP_ROLE_ID:
                 premium_role_ids[VIP_ROLE_ID] = None  # Will be filled with actual role name
             if HUNDRED_K_ROLE_ID:

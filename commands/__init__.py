@@ -9,9 +9,8 @@ from .fix_user_roles import setup as fix_user_roles_setup
 from .remove_member_role import setup as remove_member_role_setup
 from .check_user import setup as check_user_setup
 from .ai_channel import setup as ai_channel_setup
-from .verify_webhook import setup as verify_webhook_setup
 from .clear_context import setup as clear_context_setup
-
+from .clear_dm import setup as clear_dm_setup
 async def setup(bot: commands.Bot) -> None:
     """Add admin commands to the bot."""
     logger = logging.getLogger(__name__)
@@ -35,8 +34,8 @@ async def setup(bot: commands.Bot) -> None:
     await ai_channel_setup(bot)
     logger.debug(msg.format("ai_channel"))
     
-    await verify_webhook_setup(bot)
-    logger.debug(msg.format("verify_webhook"))
-    
     await clear_context_setup(bot)
     logger.debug(msg.format("clear_context"))
+
+    await clear_dm_setup(bot)
+    logger.debug(msg.format("clear_dm"))

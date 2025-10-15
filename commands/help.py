@@ -46,7 +46,10 @@ async def setup(bot):
             
             embed.add_field(
                 name="/checkuser",
-                value="Check a user's status, roles, and data (includes cooldown info)",
+                value=(
+                    "Check a user's status, roles, and data (cooldown, survey, premium role, monitoring).\n"
+                    "Includes an admin-only button to 🔁 Restart Webhook Verification."
+                ),
                 inline=False
             )
             
@@ -69,8 +72,18 @@ async def setup(bot):
             )
             
             embed.add_field(
-                name="/cleanup_roles",
-                value="Remove unverified role from users who already have member role",
+                name="/clear_context",
+                value=(
+                    "Clear all AI conversation context. DMs backup to all owners and shows who initiated."
+                ),
+                inline=False
+            )
+
+            embed.add_field(
+                name="/clear_dm",
+                value=(
+                    "Delete the bot's own messages in its DM with a specific user."
+                ),
                 inline=False
             )
             
@@ -116,15 +129,14 @@ async def setup(bot):
                 inline=False
             )
             
-            embed.add_field(
-                name="/setup_welcome_verify",
-                value="Set up the welcome-verify channel with verification button for premium users",
-                inline=False
-            )
+            # Optional/legacy or environment-specific commands can be documented here if enabled
             
             embed.add_field(
                 name="Automatic Verification",
-                value="The bot now automatically verifies users when Typeform webhook messages contain auth_code parameters. No manual intervention needed!",
+                value=(
+                    "Bot auto-verifies users upon Typeform webhook detection. If it doesn't catch immediately,"
+                    " the enhanced monitor keeps checking for up to 2 hours or until verified."
+                ),
                 inline=False
             )
             

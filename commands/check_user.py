@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import ui
 import logging
 import json
 from datetime import datetime, timezone
@@ -116,6 +117,31 @@ async def setup(bot):
                 data_info.append("❓ Button cooldown: Module not available")
             
             embed.add_field(name="User Data", value="\n".join(data_info), inline=False)
+
+            # Verification Details (survey status, premium role, monitoring)
+            verification_lines = []
+            survey_status = user_info.get('survey_status', 'unknown')
+            premium_role_name = user_info.get('premium_role_name', 'Unknown')
+            premium_role_id = user_info.get('premium_role_id', 'N/A')
+
+            verification_lines.append(f"📝 Survey status: {survey_status}")
+            verification_lines.append(f"💼 Premium role: {premium_role_name} (ID: {premium_role_id})")
+
+            # Check if enhanced monitoring is active for this user
+            monitoring_active = False
+            try:
+                from cogs.webhook_handler import WebhookHandler
+                bot = interaction.client if hasattr(interaction, 'client') else None
+                if bot:
+                    for cog in bot.cogs.values():
+                        if isinstance(cog, WebhookHandler):
+                            monitoring_active = str(user.id) in getattr(cog, 'active_monitors', {})
+                            break
+            except Exception:
+                monitoring_active = False
+
+            verification_lines.append(f"📡 Monitoring active: {monitoring_active}")
+            embed.add_field(name="Verification Details", value="\n".join(verification_lines), inline=False)
             
             # Status Summary
             status = []
@@ -141,8 +167,63 @@ async def setup(bot):
             embed.set_thumbnail(url=user.display_avatar.url)
             embed.set_footer(text=f"Checked by {interaction.user.name}")
             
+            # Admin action: restart webhook verification button
+            class RestartWebhookButton(ui.Button):
+                def __init__(self, target_user_id: str):
+                    super().__init__(
+                        style=discord.ButtonStyle.primary,
+                        label="🔁 Restart Webhook Verification",
+                        custom_id=f"restart_webhook_{target_user_id}"
+                    )
+                    self.target_user_id = target_user_id
+
+                async def callback(self, button_interaction: discord.Interaction):
+                    # Ensure only admins can trigger this
+                    if not isinstance(button_interaction.user, discord.Member) or not button_interaction.user.guild_permissions.administrator:
+                        if not button_interaction.response.is_done():
+                            await button_interaction.response.send_message("❌ Admins only.", ephemeral=True)
+                        return
+
+                    try:
+                        from cogs.webhook_handler import WebhookHandler
+                        bot_ref = button_interaction.client if hasattr(button_interaction, 'client') else None
+                        webhook_handler = None
+                        if bot_ref:
+                            for cog in bot_ref.cogs.values():
+                                if isinstance(cog, WebhookHandler):
+                                    webhook_handler = cog
+                                    break
+
+                        if webhook_handler:
+                            await webhook_handler.start_enhanced_monitoring(button_interaction.guild, self.target_user_id)
+                            if not button_interaction.response.is_done():
+                                await button_interaction.response.send_message(
+                                    f"🔁 Restarted webhook monitoring for user `{self.target_user_id}`.",
+                                    ephemeral=True
+                                )
+                        else:
+                            if not button_interaction.response.is_done():
+                                await button_interaction.response.send_message(
+                                    "⚠️ Webhook handler not available.",
+                                    ephemeral=True
+                                )
+                    except Exception as err:
+                        logging.error(f"Error restarting webhook monitoring: {err}")
+                        try:
+                            if not button_interaction.response.is_done():
+                                await button_interaction.response.send_message("❌ Failed to restart monitoring.", ephemeral=True)
+                        except Exception:
+                            pass
+
+            class AdminActionsView(ui.View):
+                def __init__(self, target_user_id: int):
+                    super().__init__(timeout=180)
+                    self.add_item(RestartWebhookButton(str(target_user_id)))
+
+            view = AdminActionsView(user.id)
+
             if not interaction.response.is_done():
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
                 
         except Exception as e:
             logging.error(f"Error checking user: {e}")

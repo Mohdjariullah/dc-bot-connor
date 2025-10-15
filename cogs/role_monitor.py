@@ -226,7 +226,7 @@ class WelcomeVerifyButton(discord.ui.Button):
                 color=0x00ff00
             )
             
-            # Add Typeform link with user ID parameter
+            # Add Typeform link with user ID as hash fragment (not query)
             typeform_link = f"https://form.typeform.com/to/VkuOahlj#auth_code={user_id}"
             embed.add_field(
                 name="🔗 Complete Survey",
