@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from utils import safe_json_write, safe_json_read
 from config import (
-    UNVERIFIED_ROLE_ID, VIP_ROLE_ID, HUNDRED_K_ROLE_ID, SUBMISSION_LOGS_CHANNEL_ID,
+    UNVERIFIED_ROLE_ID, PREMIUM_ROLE_ID, VIP_ROLE_ID, HUNDRED_K_ROLE_ID, SUBMISSION_LOGS_CHANNEL_ID,
     CALENDLY_LINK, get_verification_complete_embed
 )
 

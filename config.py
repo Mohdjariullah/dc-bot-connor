@@ -13,6 +13,7 @@ USER_LOG_ID = int(os.getenv('USER_LOG_ID', 0))
 
 
 # Role IDs
+PREMIUM_ROLE_ID = int(os.getenv('PREMIUM_ROLE_ID', 0))
 VIP_ROLE_ID = int(os.getenv('VIP_ROLE_ID', 0))
 HUNDRED_K_ROLE_ID = int(os.getenv('HUNDRED_K_ROLE_ID', 0))
 MEMBER_ROLE_ID = int(os.getenv('MEMBER_ROLE_ID', 0))
@@ -53,6 +54,8 @@ RATE_LIMIT_COOLDOWN = 30
 def get_premium_role_ids():
     """Get premium role IDs that should be monitored"""
     premium_roles = {}
+    if PREMIUM_ROLE_ID:
+        premium_roles[PREMIUM_ROLE_ID] = None  # Will be filled with actual role name
     if VIP_ROLE_ID:
         premium_roles[VIP_ROLE_ID] = None  # Will be filled with actual role name
     if HUNDRED_K_ROLE_ID:

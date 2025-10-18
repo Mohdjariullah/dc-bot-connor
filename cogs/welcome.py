@@ -11,7 +11,7 @@ from .verification import VerificationView
 import time
 from config import (
     GUILD_ID, WELCOME_CHANNEL_ID, LOGS_CHANNEL_ID, UNVERIFIED_ROLE_ID,
-    VIP_ROLE_ID, HUNDRED_K_ROLE_ID, MEMBER_ROLE_ID,
+    PREMIUM_ROLE_ID, VIP_ROLE_ID, HUNDRED_K_ROLE_ID, MEMBER_ROLE_ID,
     USER_DATA_FILE, WELCOME_MESSAGE_FILE, get_welcome_embed, ROLE_ASSIGNMENT_DELAY
 )
 from main import get_or_create_welcome_message
@@ -101,11 +101,13 @@ class Welcome(commands.Cog):
                 logging.info(f"Member {member.display_name} ({member.id}) is already verified - skipping processing")
                 return
             
-            # Check for Fanbasis premium roles using role IDs - only process premium users
+            # Check for premium roles using role IDs - only process premium users
             premium_role_detected = None
             premium_role_ids = {}
             
-            # Build premium role mapping dynamically
+            # Build premium role mapping dynamically - all 3 premium roles
+            if PREMIUM_ROLE_ID:
+                premium_role_ids[PREMIUM_ROLE_ID] = None  # Will be filled with actual role name
             if VIP_ROLE_ID:
                 premium_role_ids[VIP_ROLE_ID] = None  # Will be filled with actual role name
             if HUNDRED_K_ROLE_ID:
