@@ -175,6 +175,14 @@ class OnboardingButton(ui.Button):
             self.button_cooldowns[user_id] = current_time
             self.save_cooldowns()
             
+            # Log user verification click
+            try:
+                user_logger_cog = interaction.client.get_cog('UserLogger')
+                if user_logger_cog:
+                    await user_logger_cog.log_verification_click(interaction.user)
+            except Exception as e:
+                logging.error(f"Error logging verification click: {e}")
+            
             # Use centralized survey embed
             embed = get_survey_embed("Premium", user_id)
             
@@ -448,6 +456,14 @@ class WelcomeVerifyButton(ui.Button):
             # Update cooldown AFTER successful processing
             self.button_cooldowns[user_id] = current_time
             self.save_cooldowns()
+            
+            # Log user verification click
+            try:
+                user_logger_cog = interaction.client.get_cog('UserLogger')
+                if user_logger_cog:
+                    await user_logger_cog.log_verification_click(interaction.user)
+            except Exception as e:
+                logging.error(f"Error logging verification click: {e}")
             
             logging.info(f"Showed Typeform link to user {user_id} via welcome verify button")
             

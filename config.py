@@ -9,6 +9,7 @@ GUILD_ID = int(os.getenv('GUILD_ID', 0))
 WELCOME_CHANNEL_ID = int(os.getenv('WELCOME_CHANNEL_ID', 0))
 LOGS_CHANNEL_ID = int(os.getenv('LOGS_CHANNEL_ID', 0))
 SUBMISSION_LOGS_CHANNEL_ID = int(os.getenv('SUBMISSION_LOGS_CHANNEL_ID', 0))
+USER_LOG_ID = int(os.getenv('USER_LOG_ID', 0))
 
 
 # Role IDs
@@ -110,7 +111,7 @@ def get_survey_embed(premium_role_name, user_id):
     typeform_link = f"{TYPEFORM_LINK}#auth_code={user_id}"
     embed.add_field(
         name="🔗 Complete Survey",
-        value=f"[Click here to fill out the survey]({typeform_link})",
+        value=f"## 👉 **[Click here to fill out the survey]({typeform_link})** 👈",
         inline=False
     )
     
@@ -142,7 +143,7 @@ def get_verification_complete_embed(premium_role_name):
     )
     embed.add_field(
         name="📞 Schedule Your Onboarding Call",
-        value=f"[Click here to book your call]({CALENDLY_LINK})",
+        value=f"## 👉 **[Click here to book your call]({CALENDLY_LINK})** 👈",
         inline=False
     )
     return embed

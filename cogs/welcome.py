@@ -95,6 +95,12 @@ class Welcome(commands.Cog):
                 logging.info(f"Member {member.display_name} ({member.id}) already in logged_members - skipping log")
                 return
             
+            # Check if user is already verified (prevent reprocessing)
+            user_logger_cog = self.bot.get_cog('UserLogger')
+            if user_logger_cog and member.id in user_logger_cog.verified_users:
+                logging.info(f"Member {member.display_name} ({member.id}) is already verified - skipping processing")
+                return
+            
             # Check for Fanbasis premium roles using role IDs - only process premium users
             premium_role_detected = None
             premium_role_ids = {}
@@ -192,6 +198,14 @@ class Welcome(commands.Cog):
                         logging.warning(f"Bot doesn't have permission to send messages to logs channel {logs_channel_id}")
                     except Exception as e:
                         logging.error(f"Error sending log message: {e}")
+            
+            # Log to user logger cog (only for premium users who join)
+            try:
+                user_logger_cog = self.bot.get_cog('UserLogger')
+                if user_logger_cog:
+                    await user_logger_cog.log_user_login(member)
+            except Exception as e:
+                logging.error(f"Error logging to user logger: {e}")
                 
         except Exception as e:
             logging.error(f"Error handling member join for {member.id}: {e}")
@@ -239,10 +253,10 @@ class Welcome(commands.Cog):
         while True:
             try:
                 await self.check_and_assign_roles()
-                await asyncio.sleep(30)  # Check every 30 seconds
+                await asyncio.sleep(5)  # Check every 5 seconds for faster processing
             except Exception as e:
                 logging.error(f"Error in role assignment loop: {e}")
-                await asyncio.sleep(60)  # Wait longer on error
+                await asyncio.sleep(10)  # Wait longer on error
 
     async def cleanup_cooldowns_loop(self):
         """Background task to clean up expired button cooldowns"""
@@ -298,7 +312,7 @@ class Welcome(commands.Cog):
                 logging.error(f"Failed to report critical error: {report_error}")
 
     async def check_and_assign_roles(self):
-        """Check if any users need role assignment"""
+        """Check if any users need role assignment - optimized for concurrent users"""
         try:
             # Load user data
             from utils import safe_json_read
@@ -311,7 +325,9 @@ class Welcome(commands.Cog):
             
             # Create a list of users to remove (can't modify dict while iterating)
             users_to_remove = []
+            users_to_process = []
             
+            # First pass: identify users to process and remove
             for user_id_str, data in user_data.items():
                 user_id = int(user_id_str)
                 
@@ -333,22 +349,22 @@ class Welcome(commands.Cog):
                 lead_captured = data.get('lead_captured', False)
                 if button_clicked_at and lead_captured and not data.get('has_access', False) and not data.get('role_assigned', False):
                     if current_time - button_clicked_at >= delay_seconds:
-                        # Check if user actually has member role before assigning
-                        member_role_id = MEMBER_ROLE_ID
-                        if member_role_id:
-                            guild = self.bot.get_guild(guild_id)
-                            if guild:
-                                member_role = guild.get_role(member_role_id)
-                                if member_role and member_role not in member.roles:
-                                    await self.assign_member_role(user_id)
-                                    # Remove unverified role when they get member role
-                                    await self.remove_unverified_role(user_id)
-                                else:
-                                    # User already has member role, just update data
-                                    data['has_access'] = True
-                                    data['role_assigned'] = True
-                                    user_data[user_id_str] = data
-                                    logging.info(f"User {user_id} already has member role, updated data")
+                        users_to_process.append((user_id_str, data, member))
+            
+            # Process users in batches to avoid overwhelming Discord API
+            batch_size = 10  # Process 10 users at a time
+            for i in range(0, len(users_to_process), batch_size):
+                batch = users_to_process[i:i + batch_size]
+                
+                # Process batch concurrently
+                tasks = []
+                for user_id_str, data, member in batch:
+                    task = self.process_user_role_assignment(user_id_str, data, member, user_data)
+                    tasks.append(task)
+                
+                # Wait for batch to complete
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
             
             # Remove users who left the server
             for user_id_str in users_to_remove:
@@ -368,6 +384,30 @@ class Welcome(commands.Cog):
                 await self.report_critical_error("Role Assignment Error", f"Error in role assignment loop: {e}")
             except Exception as report_error:
                 logging.error(f"Failed to report critical error: {report_error}")
+    
+    async def process_user_role_assignment(self, user_id_str, data, member, user_data):
+        """Process role assignment for a single user"""
+        try:
+            user_id = int(user_id_str)
+            
+            # Check if user actually has member role before assigning
+            member_role_id = MEMBER_ROLE_ID
+            if member_role_id:
+                guild = self.bot.get_guild(GUILD_ID)
+                if guild:
+                    member_role = guild.get_role(member_role_id)
+                    if member_role and member_role not in member.roles:
+                        await self.assign_member_role(user_id)
+                        # Remove unverified role when they get member role
+                        await self.remove_unverified_role(user_id)
+                    else:
+                        # User already has member role, just update data
+                        data['has_access'] = True
+                        data['role_assigned'] = True
+                        user_data[user_id_str] = data
+                        logging.info(f"User {user_id} already has member role, updated data")
+        except Exception as e:
+            logging.error(f"Error processing role assignment for user {user_id_str}: {e}")
 
     async def assign_member_role(self, user_id):
         """Assign member role to user"""

@@ -19,6 +19,7 @@ class WebhookHandler(commands.Cog):
         self.bot = bot
         # Enhanced monitoring system
         self.active_monitors = {}  # Track active monitoring tasks
+        self.verification_locks = {}  # Prevent concurrent verification of same user
         self.monitoring_config = {
             'max_attempts': 120,      # Monitor for up to ~2 hours (with backoff)
             'initial_interval': 20,   # Check every 20 seconds initially
@@ -280,96 +281,126 @@ class WebhookHandler(commands.Cog):
     async def auto_verify_user(self, guild, user_id, webhook_message, skip_logs_check=False):
         """Automatically verify premium user based on auth_code from Typeform webhook"""
         try:
-            # Step 1: Extract auth_code (already done in calling function)
-            logging.info(f"Processing Typeform submission for user {user_id}")
+            # Prevent concurrent verification of the same user
+            if user_id in self.verification_locks:
+                logging.info(f"User {user_id} verification already in progress, skipping")
+                return
             
-            # Step 2: Verify auth_code exists in SUBMISSION_LOGS_CHANNEL_ID (unless skipped)
-            if not skip_logs_check:
-                logging.info(f"Checking auth_code {user_id} in submission logs channel {SUBMISSION_LOGS_CHANNEL_ID}")
-                if not await self.verify_auth_code_in_logs(guild, user_id):
-                    logging.warning(f"Auth code {user_id} not found in submission logs channel")
+            # Set verification lock
+            self.verification_locks[user_id] = True
+            
+            try:
+                # Step 1: Extract auth_code (already done in calling function)
+                logging.info(f"Processing Typeform submission for user {user_id}")
+                
+                # Step 2: Verify auth_code exists in SUBMISSION_LOGS_CHANNEL_ID (unless skipped)
+                if not skip_logs_check:
+                    logging.info(f"Checking auth_code {user_id} in submission logs channel {SUBMISSION_LOGS_CHANNEL_ID}")
+                    if not await self.verify_auth_code_in_logs(guild, user_id):
+                        logging.warning(f"Auth code {user_id} not found in submission logs channel")
+                        return
+                    logging.info(f"Auth code {user_id} found in submission logs - proceeding with verification")
+                else:
+                    logging.info(f"Skipping logs check for user {user_id}")
+                
+                # Check if user exists in the guild
+                user = guild.get_member(int(user_id))
+                if not user:
+                    logging.warning(f"User {user_id} not found in guild {guild.id}")
                     return
-                logging.info(f"Auth code {user_id} found in submission logs - proceeding with verification")
-            else:
-                logging.info(f"Skipping logs check for user {user_id}")
-            
-            # Check if user exists in the guild
-            user = guild.get_member(int(user_id))
-            if not user:
-                logging.warning(f"User {user_id} not found in guild {guild.id}")
-                return
+                    
+                # Load user data
+                user_data = safe_json_read('user_data.json', {})
                 
-            # Load user data
-            user_data = safe_json_read('user_data.json', {})
-            
-            if user_id not in user_data:
-                logging.warning(f"User {user_id} not found in user data - not a premium user")
-                return
+                if user_id not in user_data:
+                    logging.warning(f"User {user_id} not found in user data - not a premium user")
+                    return
+                    
+                user_info = user_data[user_id]
                 
-            user_info = user_data[user_id]
-            
-            # Check if already verified
-            if user_info.get('survey_status') == 'verified':
-                logging.info(f"User {user_id} already verified, skipping")
-                return
-            
-            # Check if this is a premium user
-            premium_role_id = user_info.get('premium_role_id')
-            premium_role_name = user_info.get('premium_role_name')
-            if not premium_role_id or not premium_role_name:
-                logging.warning(f"User {user_id} has no premium role stored - not a premium user")
-                return
+                # Check if already verified
+                if user_info.get('survey_status') == 'verified':
+                    logging.info(f"User {user_id} already verified, skipping")
+                    return
                 
-            # Mark as verified
-            user_info['survey_status'] = 'verified'
-            user_data[user_id] = user_info
-            safe_json_write('user_data.json', user_data)
-            
-            # Remove unverified role
-            if UNVERIFIED_ROLE_ID:
-                unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
-                if unverified_role and unverified_role in user.roles:
-                    await user.remove_roles(unverified_role)
-                    logging.info(f"Removed unverified role from user {user_id}")
-            
-            # Action 1: Restore premium role using stored role ID
-            premium_role = guild.get_role(premium_role_id)
-            
-            if premium_role:
-                await user.add_roles(premium_role)
-                logging.info(f"Restored premium role '{premium_role_name}' (ID: {premium_role_id}) to user {user_id}")
+                # Check if this is a premium user
+                premium_role_id = user_info.get('premium_role_id')
+                premium_role_name = user_info.get('premium_role_name')
+                if not premium_role_id or not premium_role_name:
+                    logging.warning(f"User {user_id} has no premium role stored - not a premium user")
+                    return
+                    
+                # Mark as verified FIRST to prevent race conditions
+                user_info['survey_status'] = 'verified'
+                user_info['verified_at'] = datetime.now(timezone.utc).timestamp()
+                user_data[user_id] = user_info
+                safe_json_write('user_data.json', user_data)
                 
-                # Action 2: Send DM with verification complete message and call link
-                embed = get_verification_complete_embed(premium_role_name)
-            else:
-                logging.error(f"Premium role with ID {premium_role_id} ('{premium_role_name}') not found in guild")
-                embed = discord.Embed(
-                    title="⚠️ Verification Complete",
-                    description=(
-                        f"Your survey has been submitted, but we couldn't find your **{premium_role_name}** role.\n\n"
-                        "Please contact support to restore your premium access.\n\n"
-                        "Thank you for completing the verification!"
-                    ),
-                    color=0xffa500
-                )
-            
-            # Send confirmation DM to user
-            try:
-                await user.send(embed=embed)
-            except discord.Forbidden:
-                logging.warning(f"Could not send DM to user {user_id}")
+                # Add to verified users set immediately to prevent role monitor interference
+                user_logger_cog = guild._state._get_client().get_cog('UserLogger')
+                if user_logger_cog:
+                    user_logger_cog.verified_users.add(int(user_id))
                 
-            # Log the auto-verification
-            logging.info(f"Auto-verified premium user {user_id} ({user.display_name}) via Typeform webhook")
-            
-            # Add reaction to the webhook message to indicate processing
-            try:
-                await webhook_message.add_reaction("✅")
-            except:
-                pass
+                # Log verification completion
+                try:
+                    if user_logger_cog:
+                        await user_logger_cog.log_verification_complete(user, user_info)
+                except Exception as e:
+                    logging.error(f"Error logging verification completion: {e}")
+                
+                # Remove unverified role
+                if UNVERIFIED_ROLE_ID:
+                    unverified_role = guild.get_role(UNVERIFIED_ROLE_ID)
+                    if unverified_role and unverified_role in user.roles:
+                        await user.remove_roles(unverified_role)
+                        logging.info(f"Removed unverified role from user {user_id}")
+                
+                # Action 1: Restore premium role using stored role ID
+                premium_role = guild.get_role(premium_role_id)
+                
+                if premium_role:
+                    await user.add_roles(premium_role)
+                    logging.info(f"Restored premium role '{premium_role_name}' (ID: {premium_role_id}) to user {user_id}")
+                    
+                    # Action 2: Send DM with verification complete message and call link
+                    embed = get_verification_complete_embed(premium_role_name)
+                else:
+                    logging.error(f"Premium role with ID {premium_role_id} ('{premium_role_name}') not found in guild")
+                    embed = discord.Embed(
+                        title="⚠️ Verification Complete",
+                        description=(
+                            f"Your survey has been submitted, but we couldn't find your **{premium_role_name}** role.\n\n"
+                            "Please contact support to restore your premium access.\n\n"
+                            "Thank you for completing the verification!"
+                        ),
+                        color=0xffa500
+                    )
+                
+                # Send confirmation DM to user
+                try:
+                    await user.send(embed=embed)
+                except discord.Forbidden:
+                    logging.warning(f"Could not send DM to user {user_id}")
+                    
+                # Log the auto-verification
+                logging.info(f"Auto-verified premium user {user_id} ({user.display_name}) via Typeform webhook")
+                
+                # Add reaction to the webhook message to indicate processing
+                try:
+                    await webhook_message.add_reaction("✅")
+                except:
+                    pass
+                    
+            finally:
+                # Always release the verification lock
+                if user_id in self.verification_locks:
+                    del self.verification_locks[user_id]
                 
         except Exception as e:
             logging.error(f"Error in auto_verify_user: {e}")
+            # Ensure lock is released even on error
+            if user_id in self.verification_locks:
+                del self.verification_locks[user_id]
 
     async def verify_auth_code_in_logs(self, guild, auth_code):
         """Verify that auth_code exists in SUBMISSION_LOGS_CHANNEL_ID"""

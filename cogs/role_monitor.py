@@ -15,6 +15,9 @@ class RoleMonitor(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.premium_role_ids = get_premium_role_ids()
+        # Add cooldown tracking to prevent rapid role changes
+        self.role_change_cooldowns = {}  # user_id -> timestamp
+        self.cooldown_duration = 30  # 30 seconds cooldown between role changes
         logging.info(f"Role monitor initialized with premium role IDs: {list(self.premium_role_ids.keys())}")
         
     @commands.Cog.listener()
@@ -55,15 +58,48 @@ class RoleMonitor(commands.Cog):
             if not new_premium_roles:
                 return
             
-            # Check if user is already verified in user_data.json
+            # CRITICAL: Check if this is a role restoration (not initial assignment)
+            # If user was recently verified, this is likely a role restoration, not initial assignment
             user_data = safe_json_read(USER_DATA_FILE, {})
             user_id = str(after.id)
             
+            # Check if user is in verified users (means they were verified and should not be reprocessed)
+            user_logger_cog = after.guild._state._get_client().get_cog('UserLogger')
+            if user_logger_cog and after.id in user_logger_cog.verified_users:
+                logging.info(f"User {after.display_name} ({after.id}) was previously verified, skipping role removal")
+                return
+            
+            # Check if user is already verified in user_data.json
             if user_id in user_data:
                 user_info = user_data[user_id]
                 if user_info.get('survey_status') == 'verified' or user_info.get('has_access', False):
                     logging.info(f"User {after.display_name} ({after.id}) already verified, skipping role removal")
                     return
+                
+                # Check if this is a role restoration (user has premium_role_id stored but survey_status is verified)
+                # This prevents the loop when webhook handler restores roles
+                if (user_info.get('premium_role_id') and 
+                    user_info.get('survey_status') == 'verified'):
+                    logging.info(f"User {after.display_name} ({after.id}) role restoration detected, skipping role removal")
+                    return
+            
+            # Additional safety check: If user has been in the server for more than 1 hour
+            # and is getting a premium role, it's likely a restoration, not initial assignment
+            time_in_server = (datetime.now(timezone.utc) - after.joined_at).total_seconds()
+            if time_in_server > 3600:  # 1 hour
+                logging.info(f"User {after.display_name} ({after.id}) has been in server for {time_in_server/3600:.1f} hours, likely role restoration - skipping")
+                return
+            
+            # Cooldown check: Prevent rapid role changes for the same user
+            current_time = datetime.now(timezone.utc).timestamp()
+            if after.id in self.role_change_cooldowns:
+                time_since_last_change = current_time - self.role_change_cooldowns[after.id]
+                if time_since_last_change < self.cooldown_duration:
+                    logging.info(f"User {after.display_name} ({after.id}) is in cooldown period ({time_since_last_change:.1f}s), skipping role removal")
+                    return
+            
+            # Update cooldown
+            self.role_change_cooldowns[after.id] = current_time
                 
             logging.info(f"Processing {len(new_premium_roles)} new premium role assignment(s) for {after.display_name} ({after.id}): {[role[1] for role in new_premium_roles]}")
             
@@ -114,6 +150,25 @@ class RoleMonitor(commands.Cog):
             
         except Exception as e:
             logging.error(f"Error handling premium role assignment: {e}")
+    
+    async def cleanup_old_cooldowns(self):
+        """Clean up old cooldown entries to prevent memory leaks"""
+        try:
+            current_time = datetime.now(timezone.utc).timestamp()
+            expired_users = []
+            
+            for user_id, timestamp in self.role_change_cooldowns.items():
+                if current_time - timestamp > self.cooldown_duration * 2:  # Keep for 2x cooldown duration
+                    expired_users.append(user_id)
+            
+            for user_id in expired_users:
+                del self.role_change_cooldowns[user_id]
+            
+            if expired_users:
+                logging.debug(f"Cleaned up {len(expired_users)} expired cooldown entries")
+                
+        except Exception as e:
+            logging.error(f"Error cleaning up cooldowns: {e}")
     
     async def ping_in_welcome_verify(self, member, role_name):
         """Ping user in welcome channel and delete message"""
@@ -230,7 +285,7 @@ class WelcomeVerifyButton(discord.ui.Button):
             typeform_link = f"https://form.typeform.com/to/VkuOahlj#auth_code={user_id}"
             embed.add_field(
                 name="🔗 Complete Survey",
-                value=f"[Click here to fill out the survey]({typeform_link})",
+                value=f"## 👉 **[Click here to fill out the survey]({typeform_link})** 👈",
                 inline=False
             )
             
@@ -256,6 +311,14 @@ class WelcomeVerifyButton(discord.ui.Button):
             }
             safe_json_write(USER_DATA_FILE, user_data)
             
+            # Log user verification click
+            try:
+                user_logger_cog = interaction.client.get_cog('UserLogger')
+                if user_logger_cog:
+                    await user_logger_cog.log_verification_click(interaction.user)
+            except Exception as e:
+                logging.error(f"Error logging verification click: {e}")
+            
             logging.info(f"Showed Typeform link to user {user_id} via welcome verify button")
             
         except Exception as e:
@@ -267,6 +330,22 @@ class WelcomeVerifyButton(discord.ui.Button):
                 )
             except:
                 pass
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Setup periodic cleanup task when bot is ready"""
+        # Start periodic cleanup task
+        asyncio.create_task(self.periodic_cleanup())
+    
+    async def periodic_cleanup(self):
+        """Periodic cleanup task to prevent memory leaks"""
+        while True:
+            try:
+                await asyncio.sleep(300)  # Run every 5 minutes
+                await self.cleanup_old_cooldowns()
+            except Exception as e:
+                logging.error(f"Error in periodic cleanup: {e}")
+                await asyncio.sleep(60)  # Wait 1 minute before retrying
 
 async def setup(bot):
     await bot.add_cog(RoleMonitor(bot))
