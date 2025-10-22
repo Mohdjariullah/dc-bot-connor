@@ -9,25 +9,31 @@ async def setup(bot):
     @bot.tree.command(name="refresh", description="Refresh the welcome message")
     async def refresh_welcome(interaction: discord.Interaction):
         """Refresh the welcome message in the welcome channel"""
+        
+        async def send_response(message, ephemeral=True):
+            """Helper function to safely send response or followup"""
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(message, ephemeral=ephemeral)
+                else:
+                    await interaction.followup.send(message, ephemeral=ephemeral)
+            except Exception as e:
+                logging.error(f"Failed to send response: {e}")
+        
         try:
             # SECURITY: Check authorization
             from main import is_authorized_guild_or_owner
             if not is_authorized_guild_or_owner(interaction):
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(
-                        "❌ You are not authorized to use this command.", ephemeral=True
-                    )
+                await send_response("❌ You are not authorized to use this command.")
                 return
             
             # SECURITY: Block DMs and check admin permissions
             if not interaction.guild:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("❌ This command can only be used in a server!", ephemeral=True)
+                await send_response("❌ This command can only be used in a server!")
                 return
             
             if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
+                await send_response("❌ You need Administrator permissions!")
                 return
             
             # Get configuration from main.py
@@ -36,39 +42,17 @@ async def setup(bot):
             # Get the welcome channel
             welcome_channel = interaction.guild.get_channel(WELCOME_CHANNEL_ID)
             if not welcome_channel:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("❌ Welcome channel not found!", ephemeral=True)
+                await send_response("❌ Welcome channel not found!")
                 return
             
-            # Create welcome embed
-            embed = discord.Embed(
-                title="🎉 Welcome to The VoCreations Mentorship! 🎉",
-                description=(
-                    "You've officially joined a community designed to help you hit $10K/month with UGC — and we're not wasting time. On your onboarding call, we'll not only get your structure in place, but also start working on placing you with clients immediately.\n\n"
-                    "But first… we need to learn about you.\n\n"
-                    "👉 **Take the Onboarding Survey now to unlock access to the Discord.**\n\n"
-                    "This survey ensures we understand your goals, current experience, and how to plug you into the mentorship the right way.\n\n"
-                    "**No survey = no access.**"
-                ),
-                color=0xFFFFFF
-            )
-            embed.set_footer(text="Book Your Onboarding Call Today!")
-            embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1370122090631532655/1401222798336200834/20.38.48_73b12891.jpg")
+            # Create welcome embed using centralized config
+            from config import get_welcome_embed
+            embed = get_welcome_embed()
             
             # Use VerificationView
-            try:
-                msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(f"✅ Welcome message refreshed! {msg.jump_url}", ephemeral=True)
-            except Exception as e:
-                logging.error(f"Error refreshing welcome message: {e}")
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("❌ Failed to refresh welcome message. Check logs for details.", ephemeral=True)
-                    
+            msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())
+            await send_response(f"✅ Welcome message refreshed! {msg.jump_url}")
+            
         except Exception as e:
             logging.error(f"Error in refresh command: {e}")
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("❌ An error occurred while processing the command.", ephemeral=True)
-            except Exception as response_error:
-                logging.error(f"Error sending error response: {response_error}") 
+            await send_response("❌ Failed to refresh welcome message. Check logs for details.") 

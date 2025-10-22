@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from utils import safe_json_write, safe_json_read
 from config import (
     UNVERIFIED_ROLE_ID, PREMIUM_ROLE_ID, VIP_ROLE_ID, HUNDRED_K_ROLE_ID, SUBMISSION_LOGS_CHANNEL_ID,
-    CALENDLY_LINK, get_verification_complete_embed
+    CALENDLY_LINK, get_verification_complete_embed, USER_DATA_FILE
 )
 
 
@@ -310,7 +310,7 @@ class WebhookHandler(commands.Cog):
                     return
                     
                 # Load user data
-                user_data = safe_json_read('user_data.json', {})
+                user_data = safe_json_read(USER_DATA_FILE, {})
                 
                 if user_id not in user_data:
                     logging.warning(f"User {user_id} not found in user data - not a premium user")
@@ -334,7 +334,7 @@ class WebhookHandler(commands.Cog):
                 user_info['survey_status'] = 'verified'
                 user_info['verified_at'] = datetime.now(timezone.utc).timestamp()
                 user_data[user_id] = user_info
-                safe_json_write('user_data.json', user_data)
+                safe_json_write(USER_DATA_FILE, user_data)
                 
                 # Add to verified users set immediately to prevent role monitor interference
                 user_logger_cog = guild._state._get_client().get_cog('UserLogger')
@@ -537,7 +537,7 @@ class WebhookHandler(commands.Cog):
         """Check if monitoring should stop (user verified or left server)"""
         try:
             # Check if user is verified
-            user_data = safe_json_read('user_data.json', {})
+            user_data = safe_json_read(USER_DATA_FILE, {})
             if user_id in user_data and user_data[user_id].get('survey_status') == 'verified':
                 return True
             

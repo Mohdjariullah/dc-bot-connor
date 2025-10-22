@@ -42,12 +42,10 @@ async def setup(bot):
             has_unverified_role = unverified_role and unverified_role in user.roles
             
             # Load user data
-            try:
-                with open('user_data.json', 'r') as f:
-                    user_data = json.load(f)
-                user_info = user_data.get(str(user.id), {})
-            except FileNotFoundError:
-                user_info = {}
+            from config import USER_DATA_FILE
+            from utils import safe_json_read, safe_json_write
+            user_data = safe_json_read(USER_DATA_FILE, {})
+            user_info = user_data.get(str(user.id), {})
             
             actions_taken = []
             
@@ -115,8 +113,7 @@ async def setup(bot):
                 'lead_captured': lead_captured
             }
             
-            with open('user_data.json', 'w') as f:
-                json.dump(user_data, f, indent=2)
+            safe_json_write(USER_DATA_FILE, user_data)
             
             # Create response embed
             embed = discord.Embed(

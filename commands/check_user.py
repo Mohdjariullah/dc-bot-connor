@@ -43,12 +43,10 @@ async def setup(bot):
             has_unverified_role = unverified_role and unverified_role in user.roles
             
             # Load user data
-            try:
-                with open('user_data.json', 'r') as f:
-                    user_data = json.load(f)
-                user_info = user_data.get(str(user.id), {})
-            except FileNotFoundError:
-                user_info = {}
+            from config import USER_DATA_FILE
+            from utils import safe_json_read
+            user_data = safe_json_read(USER_DATA_FILE, {})
+            user_info = user_data.get(str(user.id), {})
             
             embed = discord.Embed(
                 title=f"👤 User Status: {user.display_name}",

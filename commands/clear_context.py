@@ -56,7 +56,7 @@ async def setup(bot):
                         # Create a fresh Discord file object per send
                         file_content = discord.File(
                             io.BytesIO(context_data.encode('utf-8')),
-                            filename='ai_conversation_context_backup.json'
+                            filename='data/ai_conversation_context_backup.json'
                         )
                         await owner_user.send(
                             content=(

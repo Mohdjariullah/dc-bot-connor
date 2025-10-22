@@ -28,7 +28,7 @@ async def setup(bot):
             
             embed = discord.Embed(
                 title="🔧 Admin Commands",
-                description="Available admin commands for the UGC Mastery bot",
+                description="Available admin commands for The Apex Ecom Mentorship bot",
                 color=0x00ff00
             )
             

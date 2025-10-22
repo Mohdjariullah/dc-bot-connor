@@ -33,11 +33,15 @@ def is_authorized_guild_or_owner(interaction):
 
 async def get_or_create_welcome_message(welcome_channel, embed, view):
     """Get message ID and edit it, or create new if needed."""
-    try:
-        with open('welcome_message.json', 'r') as f:
-            data = json.load(f)
-            msg_id = data.get('message_id')
-    except:
+    from config import WELCOME_MESSAGE_FILE
+    from utils import safe_json_read, safe_json_write
+    
+    data = safe_json_read(WELCOME_MESSAGE_FILE, {})
+    msg_id = data.get('message_id')
+    
+    # If data is empty or corrupted, reset it
+    if not isinstance(data, dict):
+        data = {}
         msg_id = None
     
     if msg_id:
@@ -50,8 +54,7 @@ async def get_or_create_welcome_message(welcome_channel, embed, view):
     
     # Create new message only if needed
     msg = await welcome_channel.send(embed=embed, view=view)
-    with open('welcome_message.json', 'w') as f:
-        json.dump({'message_id': msg.id, 'channel_id': welcome_channel.id}, f)
+    safe_json_write(WELCOME_MESSAGE_FILE, {'message_id': msg.id, 'channel_id': welcome_channel.id})
     return msg
 
 def check_and_install_requirements():
@@ -132,7 +135,7 @@ intents.message_content = True
 intents.guilds = True
 intents.guild_messages = True
 
-class UGCMasteryGatekeeper(commands.Bot):
+class ApexEcomGatekeeper(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
         self.startup_time = datetime.now(timezone.utc)
@@ -248,7 +251,7 @@ class UGCMasteryGatekeeper(commands.Bot):
 
 
 # Create bot instance
-bot = UGCMasteryGatekeeper()
+bot = ApexEcomGatekeeper()
 
 # Add a simple test command
 @bot.tree.command(name="ping", description="Test if the bot is responding")
@@ -268,68 +271,8 @@ async def ping(interaction):
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="debug", description="Debug information for admins")
-@discord.app_commands.default_permissions(administrator=True)
-async def debug(interaction):
-    """Debug command to check bot status"""
-    if not interaction.guild:
-        return await interaction.response.send_message(
-            "❌ This command can only be used in a server!", 
-            ephemeral=True
-        )
-    
-    # Check admin permissions
-    if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message(
-            "❌ You need Administrator permissions to use this command!",
-            ephemeral=True
-        )
-    
-    embed = discord.Embed(
-        title="🔧 Debug Information",
-        color=discord.Color.blue()
-    )
-    
-    # Check cogs
-    cogs_status = []
-    expected_cogs = ['Verification', 'MemberManagement', 'Welcome']
-    for cog_name in expected_cogs:
-        cog = bot.get_cog(cog_name)
-        status = "✅ Loaded" if cog else "❌ Not loaded"
-        cogs_status.append(f"{cog_name}: {status}")
-    
-    embed.add_field(name="Cogs Status", value="\n".join(cogs_status), inline=False)
-    
-    # Check commands
-    commands = [cmd.name for cmd in bot.tree.get_commands()]
-    embed.add_field(
-        name="Slash Commands", 
-        value=f"{len(commands)} commands loaded", 
-        inline=False
-    )
-    
-    # Check environment variables (safely)
-    env_vars = []
-    required_vars = ['GUILD_ID', 'WELCOME_CHANNEL_ID', 'LAUNCHPAD_ROLE_ID', 'MEMBER_ROLE_ID', 'LOGS_CHANNEL_ID']
-    for var in required_vars:
-        value = os.getenv(var)
-        status = "✅ Set" if value else "❌ Missing"
-        env_vars.append(f"{var}: {status}")
-    
-    embed.add_field(name="Environment Variables", value="\n".join(env_vars), inline=False)
-    
-    # Bot stats
-    uptime = datetime.now(timezone.utc) - bot.startup_time
-    embed.add_field(
-        name="Bot Stats", 
-        value=f"Uptime: {str(uptime).split('.')[0]}\nLatency: {round(bot.latency * 1000)}ms", 
-        inline=False
-    )
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
 if __name__ == "__main__":
-    print("🚀 Starting UGC Mastery Bot...")
+    print("🚀 Starting Apex Ecom Bot...")
     print("=" * 60)
     
     token = os.getenv('TOKEN')

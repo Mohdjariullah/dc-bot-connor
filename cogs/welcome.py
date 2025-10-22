@@ -1,5 +1,6 @@
 import asyncio
 import io
+import time
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -8,12 +9,13 @@ import json
 import os
 from datetime import datetime, timezone
 from .verification import VerificationView
-import time
 from config import (
     GUILD_ID, WELCOME_CHANNEL_ID, LOGS_CHANNEL_ID, UNVERIFIED_ROLE_ID,
     PREMIUM_ROLE_ID, VIP_ROLE_ID, HUNDRED_K_ROLE_ID, MEMBER_ROLE_ID,
-    USER_DATA_FILE, WELCOME_MESSAGE_FILE, get_welcome_embed, ROLE_ASSIGNMENT_DELAY
+    USER_DATA_FILE, WELCOME_MESSAGE_FILE, get_welcome_embed, ROLE_ASSIGNMENT_DELAY,
+    LOGGED_MEMBERS_FILE
 )
+from utils import safe_json_read, safe_json_write
 from main import get_or_create_welcome_message
 
 class Welcome(commands.Cog):
@@ -154,8 +156,7 @@ class Welcome(commands.Cog):
             except ImportError:
                 # Fallback to direct file operations
                 try:
-                    with open(USER_DATA_FILE, 'r') as f:
-                        user_data = json.load(f)
+                    user_data = safe_json_read(USER_DATA_FILE, {})
                 except FileNotFoundError:
                     user_data = {}
                 
@@ -165,8 +166,7 @@ class Welcome(commands.Cog):
                     'survey_status': 'pending'
                 }
                 
-                with open(USER_DATA_FILE, 'w') as f:
-                    json.dump(user_data, f, indent=2)
+                safe_json_write(USER_DATA_FILE, user_data)
             
             # Assign unverified role
             if unverified_role not in member.roles:
@@ -218,22 +218,21 @@ class Welcome(commands.Cog):
     def load_logged_members(self):
         """Load logged members from file"""
         try:
-            with open('logged_members.json', 'r') as f:
-                data = json.load(f)
-                self.logged_members = set(data.get('logged_members', []))
-                logging.info(f"Loaded {len(self.logged_members)} logged members")
-                
-                # Clean up old entries (keep only recent ones, older than 1 hour)
-                current_time = time.time()
-                cleaned_members = set()
-                for member_id in self.logged_members:
-                    # For now, just keep all entries but we could add timestamp tracking later
-                    cleaned_members.add(member_id)
-                
-                if len(cleaned_members) != len(self.logged_members):
-                    self.logged_members = cleaned_members
-                    self.save_logged_members()
-                    logging.info(f"Cleaned up logged members: {len(self.logged_members)} remaining")
+            data = safe_json_read(LOGGED_MEMBERS_FILE, {})
+            self.logged_members = set(data.get('logged_members', []))
+            logging.info(f"Loaded {len(self.logged_members)} logged members")
+            
+            # Clean up old entries (keep only recent ones, older than 1 hour)
+            current_time = time.time()
+            cleaned_members = set()
+            for member_id in self.logged_members:
+                # For now, just keep all entries but we could add timestamp tracking later
+                cleaned_members.add(member_id)
+            
+            if len(cleaned_members) != len(self.logged_members):
+                self.logged_members = cleaned_members
+                self.save_logged_members()
+                logging.info(f"Cleaned up logged members: {len(self.logged_members)} remaining")
                     
         except FileNotFoundError:
             self.logged_members = set()
@@ -245,8 +244,7 @@ class Welcome(commands.Cog):
     def save_logged_members(self):
         """Save logged members to file"""
         try:
-            with open('logged_members.json', 'w') as f:
-                json.dump({'logged_members': list(self.logged_members)}, f, indent=2)
+            safe_json_write(LOGGED_MEMBERS_FILE, {'logged_members': list(self.logged_members)})
         except Exception as e:
             logging.error(f"Error saving logged members: {e}")
 
@@ -488,8 +486,7 @@ class Welcome(commands.Cog):
                 user_data[user_id_str]['has_access'] = True
                 user_data[user_id_str]['role_assigned'] = True
                 
-                with open(USER_DATA_FILE, 'w') as f:
-                    json.dump(user_data, f, indent=2)
+                safe_json_write(USER_DATA_FILE, user_data)
             
         except Exception as e:
             logging.error(f"Error assigning member role to {user_id}: {e}")
@@ -565,8 +562,7 @@ class Welcome(commands.Cog):
             if user_id_str in user_data:
                 user_data[user_id_str]['unverified_role_assigned'] = False
                 
-                with open(USER_DATA_FILE, 'w') as f:
-                    json.dump(user_data, f, indent=2)
+                safe_json_write(USER_DATA_FILE, user_data)
             
         except Exception as e:
             logging.error(f"Error removing unverified role from {user_id}: {e}")
@@ -640,8 +636,7 @@ class Welcome(commands.Cog):
                 updated = True
             
             if updated:
-                with open(USER_DATA_FILE, 'w') as f:
-                    json.dump(user_data, f, indent=2)
+                safe_json_write(USER_DATA_FILE, user_data)
                 logging.info("User data synced with Discord roles")
             
         except Exception as e:
@@ -660,14 +655,9 @@ class Welcome(commands.Cog):
                     welcome_verify_channel = channel
                     break
             
-            embed = discord.Embed(
-                title="👋 Welcome to the Server!",
-                description=(
-                    f"To access your **{premium_role_name}** subscription and the community, please complete the verification process.\n\n"
-                    "Click the button below to go to the verification channel where you can complete your survey and restore your premium access."
-                ),
-                color=0x00ff00
-            )
+            # Use centralized verification DM embed
+            from config import get_verification_dm_embed
+            embed = get_verification_dm_embed()
             
             # Create view with button
             view = discord.ui.View()

@@ -2,7 +2,8 @@ import discord
 from discord.ext import commands
 import logging
 import json
-from config import MEMBER_ROLE_ID, LOGS_CHANNEL_ID, UNVERIFIED_ROLE_ID
+from config import MEMBER_ROLE_ID, LOGS_CHANNEL_ID, UNVERIFIED_ROLE_ID, USER_DATA_FILE
+from utils import safe_json_read, safe_json_write
 
 async def setup(bot):
     @bot.tree.command(name="removemember", description="Remove member role from a user")
@@ -50,19 +51,14 @@ async def setup(bot):
             await user.remove_roles(member_role)
             
             # Update user data
-            try:
-                with open('user_data.json', 'r') as f:
-                    user_data = json.load(f)
-            except FileNotFoundError:
-                user_data = {}
+            user_data = safe_json_read(USER_DATA_FILE, {})
             
             user_id_str = str(user.id)
             if user_id_str in user_data:
                 user_data[user_id_str]['has_access'] = False
                 user_data[user_id_str]['role_assigned'] = False
                 
-                with open('user_data.json', 'w') as f:
-                    json.dump(user_data, f, indent=2)
+                safe_json_write(USER_DATA_FILE, user_data)
             
             embed = discord.Embed(
                 title="🔓 Member Role Removed",
@@ -161,11 +157,7 @@ async def setup(bot):
                     logging.error(f"Error removing unverified role from {member.id}: {e}")
             
             # Update user data
-            try:
-                with open('user_data.json', 'r') as f:
-                    user_data = json.load(f)
-            except FileNotFoundError:
-                user_data = {}
+            user_data = safe_json_read(USER_DATA_FILE, {})
             
             for member in cleaned_users:
                 user_id_str = str(member.id)
@@ -175,8 +167,7 @@ async def setup(bot):
                     user_data[user_id_str]['role_assigned'] = True
             
             if cleaned_users:
-                with open('user_data.json', 'w') as f:
-                    json.dump(user_data, f, indent=2)
+                safe_json_write(USER_DATA_FILE, user_data)
             
             # Create response embed
             embed = discord.Embed(

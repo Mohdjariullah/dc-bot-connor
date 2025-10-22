@@ -7,7 +7,8 @@ from discord.ext import commands
 import json
 import os
 from datetime import datetime, timezone
-from config import USER_LOG_ID, TYPEFORM_LINK, GUILD_ID
+from config import USER_LOG_ID, TYPEFORM_LINK, GUILD_ID, LOGGED_MEMBERS_FILE, USER_DATA_FILE
+from utils import safe_json_read, safe_json_write
 
 class UserLogger(commands.Cog):
     def __init__(self, bot):
@@ -19,22 +20,21 @@ class UserLogger(commands.Cog):
     def load_logged_users(self):
         """Load previously logged users from file"""
         try:
-            with open('logged_members.json', 'r') as f:
-                data = json.load(f)
-                self.logged_users = set(data.get('logged_users', []))
-                self.verified_users = set(data.get('verified_users', []))
-        except (FileNotFoundError, json.JSONDecodeError):
+            data = safe_json_read(LOGGED_MEMBERS_FILE, {})
+            self.logged_users = set(data.get('logged_users', []))
+            self.verified_users = set(data.get('verified_users', []))
+        except Exception as e:
+            logging.error(f"Error loading logged users: {e}")
             self.logged_users = set()
             self.verified_users = set()
 
     def save_logged_users(self):
         """Save logged users to file"""
         try:
-            with open('logged_members.json', 'w') as f:
-                json.dump({
-                    'logged_users': list(self.logged_users),
-                    'verified_users': list(self.verified_users)
-                }, f)
+            safe_json_write(LOGGED_MEMBERS_FILE, {
+                'logged_users': list(self.logged_users),
+                'verified_users': list(self.verified_users)
+            })
         except Exception as e:
             logging.error(f"Error saving logged users: {e}")
 
@@ -223,12 +223,12 @@ class UserLogger(commands.Cog):
             from utils import safe_json_read, safe_json_write
             
             # Load current user data
-            user_data = safe_json_read('user_data.json', {})
+            user_data = safe_json_read(USER_DATA_FILE, {})
             
             # Remove user if they exist
             if str(user_id) in user_data:
                 del user_data[str(user_id)]
-                safe_json_write('user_data.json', user_data)
+                safe_json_write(USER_DATA_FILE, user_data)
                 logging.info(f"Removed verified user {user_id} from user_data.json")
             else:
                 logging.info(f"User {user_id} not found in user_data.json")
@@ -252,7 +252,7 @@ class UserLogger(commands.Cog):
             from utils import safe_json_read, safe_json_write
             
             # Load user data
-            user_data = safe_json_read('user_data.json', {})
+            user_data = safe_json_read(USER_DATA_FILE, {})
             if not user_data:
                 return
             
@@ -270,7 +270,7 @@ class UserLogger(commands.Cog):
             
             # Save updated data
             if verified_user_ids:
-                safe_json_write('user_data.json', user_data)
+                safe_json_write(USER_DATA_FILE, user_data)
                 self.save_logged_users()
                 logging.info(f"Cleaned up {len(verified_user_ids)} verified users from user_data.json")
                 

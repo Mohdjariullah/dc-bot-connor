@@ -35,14 +35,14 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
 OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-r1-0528-qwen3-8b:free')
 
 # File Paths
-USER_DATA_FILE = 'user_data.json'
-COOLDOWN_FILE = 'button_cooldowns.json'
-LEAD_DATA_FILE = 'lead_data.json'
-WELCOME_MESSAGE_FILE = 'welcome_message.json'
-AI_CHANNELS_FILE = 'ai_enabled_channels.json'
-CONVERSATION_CONTEXT_FILE = 'ai_conversation_context.json'
-SCHEDULE_FILE = 'daily_channel_schedules.json'
-LOGGED_MEMBERS_FILE = 'logged_members.json'
+USER_DATA_FILE = 'data/user_data.json'
+COOLDOWN_FILE = 'data/button_cooldowns.json'
+LEAD_DATA_FILE = 'data/lead_data.json'
+WELCOME_MESSAGE_FILE = 'data/welcome_message.json'
+AI_CHANNELS_FILE = 'data/ai_enabled_channels.json'
+CONVERSATION_CONTEXT_FILE = 'data/ai_conversation_context.json'
+SCHEDULE_FILE = 'data/daily_channel_schedules.json'
+LOGGED_MEMBERS_FILE = 'data/logged_members.json'
 
 # Rate Limiting
 RATE_LIMIT_SECONDS = 10
@@ -114,7 +114,7 @@ def get_survey_embed(premium_role_name, user_id):
     typeform_link = f"{TYPEFORM_LINK}#auth_code={user_id}"
     embed.add_field(
         name="🔗 Complete Survey",
-        value=f"## 👉 **[Click here to fill out the survey]({typeform_link})** 👈",
+        value=f"👉 **[Click here to fill out the survey]({typeform_link})** 👈",
         inline=False
     )
     
@@ -146,7 +146,7 @@ def get_verification_complete_embed(premium_role_name):
     )
     embed.add_field(
         name="📞 Schedule Your Onboarding Call",
-        value=f"## 👉 **[Click here to book your call]({CALENDLY_LINK})** 👈",
+        value=f"👉 **[Click here to book your call]({CALENDLY_LINK})** 👈",
         inline=False
     )
     return embed

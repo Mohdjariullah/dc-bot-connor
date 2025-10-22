@@ -193,18 +193,9 @@ class RoleMonitor(commands.Cog):
     async def send_verification_dm(self, member, role_name):
         """Send DM with verification message and button"""
         try:
-            # Send welcome DM with verification button
-            embed = discord.Embed(
-                title="👋 Welcome to the Server!",
-                description=(
-                    "To access your subscription and the community, please complete the verification process.\n\n"
-                    "Click the button below to start verifying!\n\n"
-                    "We're excited to have you with us!"
-                ),
-                color=0xF00000
-            )
-            embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1370122090631532655/1401222798336200834/20.38.48_73b12891.jpg")
-            embed.set_footer(text="Join our community today!")
+            # Send welcome DM with verification button using centralized config
+            from config import get_verification_dm_embed
+            embed = get_verification_dm_embed()
             
             # Try to add a button to the welcome channel if possible
             welcome_channel_id = WELCOME_CHANNEL_ID
@@ -266,37 +257,9 @@ class WelcomeVerifyButton(discord.ui.Button):
             
             premium_role_name = user_info.get('premium_role_name', 'Premium')
             
-            # Create embed with Typeform link
-            embed = discord.Embed(
-                title="📋 Complete Your Survey to Restore Premium Access",
-                description=(
-                    f"Welcome back! We've detected your **{premium_role_name}** tier.\n\n"
-                    "Complete this quick survey to restore your premium access and get started with The VoCreations Mentorship!\n\n"
-                    "👉 **Click the link below to complete the survey**\n\n"
-                    "**What happens next?**\n"
-                    "1. Complete the survey using the link below\n"
-                    "2. We'll automatically restore your premium role\n"
-                    "3. You'll have full access to the community!"
-                ),
-                color=0x00ff00
-            )
-            
-            # Add Typeform link with user ID as hash fragment (not query)
-            typeform_link = f"https://form.typeform.com/to/VkuOahlj#auth_code={user_id}"
-            embed.add_field(
-                name="🔗 Complete Survey",
-                value=f"## 👉 **[Click here to fill out the survey]({typeform_link})** 👈",
-                inline=False
-            )
-            
-            # Add user ID info for debugging
-            embed.add_field(
-                name="📋 Your User ID",
-                value=f"`{user_id}` (keep this for reference)",
-                inline=False
-            )
-            
-            embed.set_footer(text="We'll automatically verify you once you submit the survey!")
+            # Create embed with Typeform link using centralized config
+            from config import get_survey_embed, TYPEFORM_LINK
+            embed = get_survey_embed(premium_role_name, user_id)
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
             

@@ -48,13 +48,111 @@ def safe_json_read(filename, default=None):
     with lock:
         try:
             with open(filename, 'r') as f:
-                data = json.load(f)
+                content = f.read().strip()
+                if not content:
+                    return default
+                data = json.loads(content)
                 return data
         except FileNotFoundError:
+            return default
+        except (json.JSONDecodeError, ValueError) as e:
+            logging.error(f"Error reading from {filename}: {e}")
             return default
         except Exception as e:
             logging.error(f"Error reading from {filename}: {e}")
             return default
+
+def atomic_user_data_update(filename, user_id, update_func, default_data=None):
+    """
+    Atomically update user data for a specific user.
+    This prevents race conditions when multiple processes try to update the same user.
+    
+    Args:
+        filename: Path to the JSON file
+        user_id: User ID to update
+        update_func: Function that takes current user data and returns updated data
+        default_data: Default data structure if user doesn't exist
+    
+    Returns:
+        Updated user data for the user
+    """
+    if default_data is None:
+        default_data = {}
+    
+    lock = get_file_lock(filename)
+    with lock:
+        try:
+            # Read current data
+            data = safe_json_read(filename, {})
+            
+            # Get current user data or default
+            current_user_data = data.get(str(user_id), default_data.copy())
+            
+            # Apply update function
+            updated_user_data = update_func(current_user_data)
+            
+            # Update the data structure
+            data[str(user_id)] = updated_user_data
+            
+            # Write back atomically
+            safe_json_write(filename, data)
+            
+            return updated_user_data
+            
+        except Exception as e:
+            logging.error(f"Error in atomic user data update for {user_id}: {e}")
+            raise
+
+def atomic_user_data_read(filename, user_id, default_data=None):
+    """
+    Atomically read user data for a specific user.
+    
+    Args:
+        filename: Path to the JSON file
+        user_id: User ID to read
+        default_data: Default data structure if user doesn't exist
+    
+    Returns:
+        User data for the user
+    """
+    if default_data is None:
+        default_data = {}
+    
+    lock = get_file_lock(filename)
+    with lock:
+        try:
+            data = safe_json_read(filename, {})
+            return data.get(str(user_id), default_data.copy())
+        except Exception as e:
+            logging.error(f"Error in atomic user data read for {user_id}: {e}")
+            return default_data.copy()
+
+def atomic_user_data_delete(filename, user_id):
+    """
+    Atomically delete user data for a specific user.
+    
+    Args:
+        filename: Path to the JSON file
+        user_id: User ID to delete
+    
+    Returns:
+        True if user was deleted, False if user didn't exist
+    """
+    lock = get_file_lock(filename)
+    with lock:
+        try:
+            data = safe_json_read(filename, {})
+            user_id_str = str(user_id)
+            
+            if user_id_str in data:
+                del data[user_id_str]
+                safe_json_write(filename, data)
+                return True
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error in atomic user data delete for {user_id}: {e}")
+            return False
 
 async def report_critical_error(error_type, error_message, bot=None, interaction=None):
     """Report critical errors to owners via logs and DM"""
@@ -97,7 +195,7 @@ async def report_critical_error(error_type, error_message, bot=None, interaction
                 stack_trace = stack_trace[:1000] + "..."
             error_embed.add_field(name="Stack Trace", value=f"```{stack_trace}```", inline=False)
         
-        error_embed.set_footer(text="UGC Mastery Bot - Critical Error Report")
+        error_embed.set_footer(text="The Apex Ecom Mentorship Bot - Critical Error Report")
         
         # Send to logs channel
         logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))

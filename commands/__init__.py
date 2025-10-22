@@ -11,6 +11,7 @@ from .check_user import setup as check_user_setup
 from .ai_channel import setup as ai_channel_setup
 from .clear_context import setup as clear_context_setup
 from .clear_dm import setup as clear_dm_setup
+from .debug import setup as debug_setup
 async def setup(bot: commands.Bot) -> None:
     """Add admin commands to the bot."""
     logger = logging.getLogger(__name__)
@@ -39,3 +40,6 @@ async def setup(bot: commands.Bot) -> None:
 
     await clear_dm_setup(bot)
     logger.debug(msg.format("clear_dm"))
+
+    await debug_setup(bot)
+    logger.debug(msg.format("debug"))

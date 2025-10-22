@@ -4,6 +4,7 @@
 .env.production
 
 # Data files
+data/
 welcome_data.json
 user_data.json
 daily_channel_schedules.json
