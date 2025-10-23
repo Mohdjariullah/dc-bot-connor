@@ -31,8 +31,27 @@ def is_authorized_guild_or_owner(interaction):
         return True
     return False
 
+async def cleanup_old_welcome_messages(welcome_channel, current_msg_id):
+    """Clean up any old welcome messages in the channel, keeping only the current one."""
+    try:
+        # Get recent messages (last 50 should be enough)
+        async for message in welcome_channel.history(limit=50):
+            # Skip the current message
+            if message.id == current_msg_id:
+                continue
+            
+            # Check if this message has embeds and views (likely a welcome message)
+            if message.embeds and message.components:
+                try:
+                    await message.delete()
+                    logging.info(f"Deleted old welcome message: {message.id}")
+                except Exception as e:
+                    logging.warning(f"Could not delete old welcome message {message.id}: {e}")
+    except Exception as e:
+        logging.error(f"Error during welcome message cleanup: {e}")
+
 async def get_or_create_welcome_message(welcome_channel, embed, view):
-    """Get message ID and edit it, or create new if needed."""
+    """Get message ID and edit it, or create new if needed. Ensures only one welcome message exists."""
     from config import WELCOME_MESSAGE_FILE
     from utils import safe_json_read, safe_json_write
     
@@ -48,13 +67,30 @@ async def get_or_create_welcome_message(welcome_channel, embed, view):
         try:
             msg = await welcome_channel.fetch_message(msg_id)
             await msg.edit(embed=embed, view=view)
+            logging.info(f"Successfully edited existing welcome message: {msg_id}")
+            
+            # Clean up any other welcome messages
+            await cleanup_old_welcome_messages(welcome_channel, msg_id)
             return msg
-        except:
-            pass
+        except discord.NotFound:
+            logging.warning(f"Welcome message {msg_id} not found, will create new one and clear old reference")
+            # Clear the old message ID from JSON since it doesn't exist
+            safe_json_write(WELCOME_MESSAGE_FILE, {})
+        except Exception as e:
+            logging.error(f"Error editing welcome message {msg_id}: {e}")
+            # Clear the old message ID from JSON on error
+            safe_json_write(WELCOME_MESSAGE_FILE, {})
     
-    # Create new message only if needed
+    # Create new message
+    logging.info(f"Creating new welcome message in channel {welcome_channel.name}")
     msg = await welcome_channel.send(embed=embed, view=view)
+    
+    # Update JSON with new message ID only
     safe_json_write(WELCOME_MESSAGE_FILE, {'message_id': msg.id, 'channel_id': welcome_channel.id})
+    logging.info(f"Created new welcome message: {msg.id}")
+    
+    # Clean up any other welcome messages
+    await cleanup_old_welcome_messages(welcome_channel, msg.id)
     return msg
 
 def check_and_install_requirements():

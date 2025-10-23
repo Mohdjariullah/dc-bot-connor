@@ -19,6 +19,9 @@ def safe_json_write(filename, data):
     lock = get_file_lock(filename)
     with lock:
         try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            
             # Use atomic write operation for better safety
             temp_filename = f"{filename}.tmp"
             with open(temp_filename, 'w') as f:

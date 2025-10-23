@@ -51,7 +51,11 @@ async def setup(bot):
             
             # Use VerificationView
             msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())
-            await send_response(f"✅ Welcome message refreshed! {msg.jump_url}")
+            
+            # Debug info
+            logging.info(f"Welcome message refreshed: ID={msg.id}, Channel={msg.channel.name}, Jump URL={msg.jump_url}")
+            
+            await send_response(f"✅ Welcome message refreshed!\n📝 Message ID: `{msg.id}`\n🔗 [Jump to message]({msg.jump_url})")
             
         except Exception as e:
             logging.error(f"Error in refresh command: {e}")
